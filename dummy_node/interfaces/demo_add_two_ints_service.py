@@ -13,7 +13,7 @@ from dummy_node.registry import InterfaceBase, register
 class DemoAddTwoIntsService(InterfaceBase):
     name = "demo_add_two_ints_service"
 
-    service = "~/add_two_ints"
+    service = "add_two_ints"  # namespace="dummy" → /dummy/add_two_ints
 
     def setup(self) -> None:
         self._srv = self.node.create_service(

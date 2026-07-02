@@ -17,7 +17,7 @@ from dummy_node.registry import InterfaceBase, register
 class DemoFibonacciAction(InterfaceBase):
     name = "demo_fibonacci_action"
 
-    action = "~/fibonacci"
+    action = "fibonacci"  # namespace="dummy" → /dummy/fibonacci
     step_delay_sec = 0.5  # 각 항 계산 사이 지연(테스트에서 관측 가능하도록).
 
     def setup(self) -> None:

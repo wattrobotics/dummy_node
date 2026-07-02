@@ -50,6 +50,10 @@ class InterfaceBase:
 
     콜백 그룹이 필요하면 `self.callback_group`(인터페이스별 ReentrantCallbackGroup)을
     사용하면 서로 다른 인터페이스 간 동시 실행이 격리된다.
+
+    [네임스페이스 규칙] 코어 노드가 namespace="dummy"로 생성되므로, 인터페이스는
+    항상 **상대 이름**(예: "chatter")만 사용한다. 그러면 자동으로 /dummy/... 아래에
+    놓인다. `~/` 접두사나 절대경로("/...")는 규칙을 깨뜨리므로 사용하지 않는다.
     """
 
     name: str = "unnamed_interface"

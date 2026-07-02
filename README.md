@@ -42,6 +42,10 @@ dummy_node/
 
 코어 노드는 기동 시 `interfaces/` 폴더를 자동 스캔하므로 `node.py`는 절대 손대지 않는다.
 
+> **네임스페이스 규칙:** 모든 topic/service/action 이름은 `dummy/` 하위에 있어야 한다.
+> 코어 노드가 `namespace="dummy"`로 생성되므로, 인터페이스는 **상대 이름**(예: `"my_topic"`)만
+> 쓰면 자동으로 `/dummy/my_topic`이 된다. `~/`나 절대경로(`/...`)는 규칙을 깨므로 쓰지 않는다.
+
 ```python
 from example_interfaces.msg import String
 from dummy_node.registry import InterfaceBase, register
@@ -51,7 +55,8 @@ class MyPublisher(InterfaceBase):
     name = "my_publisher"
 
     def setup(self):
-        self._pub = self.node.create_publisher(String, "~/my_topic", 10)
+        # 상대 이름 → /dummy/my_topic
+        self._pub = self.node.create_publisher(String, "my_topic", 10)
         self.node.create_timer(1.0, self._tick)
 
     def _tick(self):
@@ -67,11 +72,11 @@ source install/setup.bash
 ros2 run dummy_node dummy_node
 ```
 
-기본 제공 인터페이스 (노드명 `dummy_node` 기준):
+기본 제공 인터페이스 (모두 `dummy/` 네임스페이스 하위):
 
 | 종류 | 이름 | 타입 |
 |------|------|------|
-| Publisher | `/dummy_node/chatter` | `example_interfaces/msg/String` (1Hz) |
-| Subscriber | `/dummy_node/echo_in` | `example_interfaces/msg/String` |
-| Service | `/dummy_node/add_two_ints` | `example_interfaces/srv/AddTwoInts` |
-| Action | `/dummy_node/fibonacci` | `example_interfaces/action/Fibonacci` |
+| Publisher | `/dummy/chatter` | `example_interfaces/msg/String` (1Hz) |
+| Subscriber | `/dummy/echo_in` | `example_interfaces/msg/String` |
+| Service | `/dummy/add_two_ints` | `example_interfaces/srv/AddTwoInts` |
+| Action | `/dummy/fibonacci` | `example_interfaces/action/Fibonacci` |

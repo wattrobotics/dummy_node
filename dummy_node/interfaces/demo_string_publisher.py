@@ -14,7 +14,7 @@ class DemoStringPublisher(InterfaceBase):
     name = "demo_string_publisher"
 
     # 필요 시 조정할 파라미터.
-    topic = "~/chatter"
+    topic = "chatter"  # namespace="dummy" → /dummy/chatter
     period_sec = 1.0
 
     def setup(self) -> None:

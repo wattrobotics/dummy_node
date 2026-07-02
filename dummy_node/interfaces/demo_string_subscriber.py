@@ -13,7 +13,7 @@ from dummy_node.registry import InterfaceBase, register
 class DemoStringSubscriber(InterfaceBase):
     name = "demo_string_subscriber"
 
-    topic = "~/echo_in"
+    topic = "echo_in"  # namespace="dummy" → /dummy/echo_in
 
     def setup(self) -> None:
         self._sub = self.node.create_subscription(

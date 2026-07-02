@@ -17,7 +17,9 @@ class DummyNode(Node):
     """등록된 더미 인터페이스들을 호스팅하는 단일 노드."""
 
     def __init__(self):
-        super().__init__("dummy_node")
+        # namespace="dummy" 고정 → 모든 인터페이스가 상대 이름만 써도
+        # 자동으로 /dummy/... 아래에 놓인다. (프로젝트 규칙)
+        super().__init__("dummy_node", namespace="dummy")
 
         # interfaces/ 하위 모듈을 모두 import 하여 레지스트리를 채운다.
         discover_interfaces()
