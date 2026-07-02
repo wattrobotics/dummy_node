@@ -19,19 +19,25 @@ ROS2 Jazzy 기반 **더미 / 테스트 하네스 노드** 모음 패키지.
 ## 환경
 
 - ROS2 Jazzy
-- 빌드 타입: `ament_python`
+- 패키지 2개: `dummy_node`(ament_python, 노드), `dummy_node_interfaces`(ament_cmake, 커스텀 srv/msg)
 
 ## 구조
 
 ```
-dummy_node/
-├── node.py            # 코어 노드. interfaces/ 를 스캔해 자동 로드 (수정 불필요)
-├── registry.py        # InterfaceBase + @register 데코레이터 + 자동 탐색
-└── interfaces/        # 인터페이스 구현 (여기에 파일만 추가하면 확장 완료)
-    ├── demo_string_publisher.py     # Topic Publisher 예시
-    ├── demo_string_subscriber.py    # Topic Subscriber 예시
-    ├── demo_add_two_ints_service.py # Service Server 예시
-    └── demo_fibonacci_action.py     # Action Server 예시
+dummy_node/                        # git repo 루트 (멀티패키지)
+├── dummy_node/                    # ament_python 패키지 (노드 본체)
+│   └── dummy_node/
+│       ├── node.py                # 코어 노드. interfaces/ 를 스캔해 자동 로드 (수정 불필요)
+│       ├── registry.py            # InterfaceBase + @register 데코레이터 + 자동 탐색
+│       └── interfaces/            # 인터페이스 구현 (여기에 파일만 추가하면 확장 완료)
+│           ├── demo_string_publisher.py     # Topic Publisher 예시
+│           ├── demo_string_subscriber.py    # Topic Subscriber 예시
+│           ├── demo_add_two_ints_service.py # Service Server 예시
+│           ├── demo_fibonacci_action.py     # Action Server 예시
+│           ├── robot_side_door.py           # SetBool 서비스 + Bool status 퍼블리셔
+│           └── robot_floor.py               # 층 이동 (SetInt 서비스 2종 + Int32 퍼블리셔)
+└── dummy_node_interfaces/         # ament_cmake 패키지 (커스텀 인터페이스)
+    └── srv/SetInt.srv             # 정수 값 설정용 범용 서비스
 ```
 
 ### 새 인터페이스 추가법
@@ -67,7 +73,7 @@ class MyPublisher(InterfaceBase):
 
 ```bash
 cd ~/ros2_ws
-colcon build --packages-select dummy_node
+colcon build --packages-select dummy_node_interfaces dummy_node
 source install/setup.bash
 ros2 run dummy_node dummy_node
 ```
@@ -80,3 +86,18 @@ ros2 run dummy_node dummy_node
 | Subscriber | `/dummy/echo_in` | `example_interfaces/msg/String` |
 | Service | `/dummy/add_two_ints` | `example_interfaces/srv/AddTwoInts` |
 | Action | `/dummy/fibonacci` | `example_interfaces/action/Fibonacci` |
+| Service | `/dummy/robot/open_side_door` | `example_interfaces/srv/SetBool` (문 열기/닫기) |
+| Publisher | `/dummy/robot/side_door/status` | `example_interfaces/msg/Bool` (문 상태) |
+| Service | `/dummy/robot/set_current_floor` | `dummy_node_interfaces/srv/SetInt` (즉시 층 변경) |
+| Service | `/dummy/robot/set_target_floor` | `dummy_node_interfaces/srv/SetInt` (1층/초 이동) |
+| Publisher | `/dummy/robot/current_floor` | `example_interfaces/msg/Int32` (현재 층, 1Hz) |
+
+### 층(floor) 규칙
+
+- 지하 1층 = `-1`, **0층은 존재하지 않음** (이동 시 `1 ↔ -1`로 0을 건너뜀).
+- 초기 층은 파라미터 `initial_floor`(config)로 설정, 기본값 `1`.
+
+```bash
+# 초기 층을 config로 지정하여 실행
+ros2 run dummy_node dummy_node --ros-args -p initial_floor:=3
+```

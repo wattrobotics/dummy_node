@@ -1,0 +1,6 @@
+# 정수 값 하나를 설정하는 범용 서비스 (예: 층 번호).
+int64 value
+---
+bool success
+string message
+int64 current_floor
