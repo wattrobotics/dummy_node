@@ -75,7 +75,13 @@ class MyPublisher(InterfaceBase):
 cd ~/ros2_ws
 colcon build --packages-select dummy_node_interfaces dummy_node
 source install/setup.bash
+
+# 직접 실행
 ros2 run dummy_node dummy_node
+
+# 런치 파일로 실행 (권장)
+ros2 launch dummy_node dummy_node.launch.py
+ros2 launch dummy_node dummy_node.launch.py initial_floor:=3
 ```
 
 기본 제공 인터페이스 (모두 `dummy/` 네임스페이스 하위):
