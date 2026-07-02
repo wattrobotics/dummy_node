@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>dummy_node</name>
+  <version>0.0.1</version>
+  <description>ROS2 Jazzy 더미/테스트 하네스 노드 모음. 외부 테스트가 다양한 방식으로 상호작용할 수 있는 테스트 대상 노드를 제공한다.</description>
+  <maintainer email="jeongmin.choi@wattrobotics.ai">wntdev99</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
