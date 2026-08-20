@@ -7,14 +7,24 @@ ROS2 Jazzy 기반 **더미 / 테스트 하네스 노드** 모음 패키지.
 
 ## 목적
 
-- 외부에서 이 노드들을 상대로 다양한 ROS2 상호작용을 시험할 수 있게 한다.
-  - Topic publish / subscribe (다양한 메시지 타입, QoS)
-  - Service 요청 / 응답
-  - Action goal / feedback / result / cancel
-  - Parameter 읽기 / 쓰기 (동적 파라미터 콜백)
-  - TF 프레임 발행
-  - Lifecycle 상태 전이
-  - 의도적 지연 / 에러 / 타임아웃 주입 (장애 시뮬레이션)
+외부에서 이 노드들을 상대로 다양한 ROS2 상호작용을 시험할 수 있게 한다.
+
+**현재 지원**
+
+- Topic publish / subscribe (다양한 메시지 타입, QoS)
+- Service 요청 / 응답
+- Action goal / feedback / result / cancel
+- Parameter **읽기 전용** — 기동 시 config YAML로 초기값 주입 (아래 [파라미터](#파라미터-config) 참고)
+
+**미지원**
+
+- **동적 파라미터 (파라미터 쓰기)** — 각 인터페이스는 `setup()` 에서 값을 1회만 읽으므로
+  `ros2 param set` 은 반영되지 않는다. 런타임 상태 변경은 서비스로 한다.
+- TF 프레임 발행
+- Lifecycle 상태 전이
+- 의도적 지연 / 에러 / 타임아웃 주입 (장애 시뮬레이션)
+
+미지원 항목은 필요해지는 시점에 인터페이스를 추가해 지원한다.
 
 ## 환경
 
