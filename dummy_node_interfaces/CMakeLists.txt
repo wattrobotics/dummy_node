@@ -12,6 +12,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SetInt.srv"
   "srv/SetTrayBool.srv"
   "srv/OpenTrayDoor.srv"
+  "srv/Notify.srv"
   "msg/PersonPresence.msg"
   "msg/LoadCellTray.msg"
   "msg/LoadCellState.msg"

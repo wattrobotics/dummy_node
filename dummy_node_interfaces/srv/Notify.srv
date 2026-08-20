@@ -1,0 +1,16 @@
+# 알림 요청. 더미 알림 서버(`/dummy/notify`)가 받아 수신 내용을 터미널에 출력한다.
+#
+# 실제 알림 수단(운영자 보고 상행·팝업·푸시 등)이 준비되기 전까지, "알림을 보냈다" 는
+# 사실과 그 내용을 사람이 눈으로 확인하는 용도다.
+#
+# 스펙 대응: TakeParcelScreen.md §4.5 `운영자에게 보고`(§10 D8) / `사용자에게 알림`.
+# 문구는 넣지 않는다 — 문구 소유자는 수신 측(SM 의 다국어 리소스)이다(§1.2).
+string channel      # 수신 대상. operator | user  (그 외 값도 받되 경고를 남긴다)
+string level        # 심각도. info | warn | error  (빈 값 = info)
+string code         # 사유 코드. 예: remaining_parcel  (문구가 아니라 코드다)
+string mission_id   # 대상 미션 id. 없으면 빈 문자열
+string params_json  # 부가 정보(JSON). 없으면 빈 문자열 또는 "{}"
+---
+bool success        # 알림 수신 성공 여부
+string message      # 처리 결과 / 거부 사유
+int64 seq           # 이 서버가 부여한 수신 순번(1부터). 로그와 대조하는 용도

@@ -39,3 +39,8 @@
     # CloseTrayDoor 1회 goal 의 제한 시간. 끼임이 해소되지 않으면 이 시간에 걸려
     # ERROR_TIMEOUT 이 된다(force=true 로 계속 시도하는 경우).
     door_close_timeout_sec: 10.0
+
+    # --- notify (TakeParcelScreen.md §4.5) ---
+    # true 면 기동 시부터 모든 알림 요청을 거부한다. 보고 실패 누적 경로를 시험할 때
+    # 쓰며, 런타임에는 /dummy/notify/set_fail 서비스로 켜고 끈다.
+    notify_fail: false

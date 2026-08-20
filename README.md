@@ -48,7 +48,8 @@ dummy_node/                        # git repo 루트 (멀티패키지)
 │   │       ├── robot_floor.py               # 층 이동 (SetInt 서비스 2종 + Int32 퍼블리셔)
 │   │       ├── person_presence.py           # 사람 인식 (PersonPresence 퍼블 + SetBool 토글)
 │   │       ├── load_cell.py                 # 로드셀 (LoadCellState 퍼블 + occupied/healthy 토글)
-│   │       └── tray_door.py                 # 적재함 문 (열기 srv + 닫기 action + 상태 토픽)
+│   │       ├── tray_door.py                 # 적재함 문 (열기 srv + 닫기 action + 상태 토픽)
+│   │       └── notify.py                    # 알림 서버 (수신 내용을 터미널에 출력)
 │   ├── config/
 │   │   └── dummy_node.yaml        # 파라미터 기본값 (모든 파라미터는 여기서 관리)
 │   └── launch/
@@ -57,6 +58,7 @@ dummy_node/                        # git repo 루트 (멀티패키지)
     ├── srv/SetInt.srv             # 정수 값 설정용 범용 서비스
     ├── srv/SetTrayBool.srv        # 더미 제어용 tray 단위 bool 설정
     ├── srv/OpenTrayDoor.srv       # 적재함 문 열기(개시)
+    ├── srv/Notify.srv             # 알림 요청 (channel/level/code/mission_id/params)
     ├── action/CloseTrayDoor.action# 적재함 문 닫기(취소·끼임 지원)
     ├── msg/PersonPresence.msg     # 사람 인식 결과 (Header + is_person)
     ├── msg/LoadCellState.msg      # 로드셀 상태 (Header + LoadCellTray[])
@@ -117,6 +119,7 @@ class MyPublisher(InterfaceBase):
 | `door_open_duration_sec` | double | `2.0` | `tray_door` | 열기 개시 → 완전 열림 소요 시간 |
 | `door_close_duration_sec` | double | `2.0` | `tray_door` | 닫기 개시 → 완전 닫힘 소요 시간 |
 | `door_close_timeout_sec` | double | `10.0` | `tray_door` | `CloseTrayDoor` 1회 goal 제한 시간 |
+| `notify_fail` | bool | `false` | `notify` | 기동 시부터 알림 요청을 거부할지 |
 
 > **YAML 키는 FQN(`/dummy/dummy_node`)이어야 한다.** 코어 노드가 코드에서
 > `namespace="dummy"` 로 생성되므로 완전한 노드 이름이 `/dummy/dummy_node` 다.
@@ -171,6 +174,8 @@ ros2 launch dummy_node dummy_node.launch.py config_file:=/path/to/my_dummy.yaml
 | Service | `/dummy/robot/tray_door/open` | `dummy_node_interfaces/srv/OpenTrayDoor` (열기 개시) |
 | **Action** | `/dummy/robot/tray_door/close` | `dummy_node_interfaces/action/CloseTrayDoor` (닫기, 취소 가능) |
 | Service | `/dummy/robot/tray_door/set_obstructed` | `dummy_node_interfaces/srv/SetTrayBool` (끼임 감지 주입) |
+| Service | `/dummy/notify` | `dummy_node_interfaces/srv/Notify` (알림 수신 → 터미널 출력) |
+| Service | `/dummy/notify/set_fail` | `example_interfaces/srv/SetBool` (알림 거부 모드 토글) |
 
 ### 층(floor) 규칙
 
@@ -259,4 +264,49 @@ ros2 service call /dummy/robot/tray_door/set_obstructed dummy_node_interfaces/sr
 
 # 상태 확인
 ros2 topic echo /dummy/robot/tray_door/state
+```
+
+### 알림 서버(notify)
+
+알림 요청을 받아 **수신 경로와 요청 전문을 터미널에 출력**한다. 실제 알림 수단이 준비되기
+전까지, 알림이 실제로 도달했는지와 무엇이 실렸는지를 사람이 눈으로 확인하는 용도다.
+
+스펙 대응: `TakeParcelScreen.md` §4.5 — `운영자에게 보고`(§10 D8, 상행 코드 신설 대기) ·
+`사용자에게 알림`. **문구는 받지 않는다** — 문구 소유자는 수신 측이고 BT는 사유 코드만
+넘긴다(§1.2). 그래서 `Notify.srv` 에는 `message` 입력이 없고 `code` 만 있다.
+
+| 필드 | 의미 |
+|---|---|
+| `channel` | 수신 대상. `operator` \| `user` (그 외 값도 받되 경고를 남긴다) |
+| `level` | 심각도. `info` \| `warn` \| `error`. 빈 값은 `info`. 로그 심각도에 반영된다 |
+| `code` | 사유 코드 (예: `remaining_parcel`). 문구가 아니다 |
+| `mission_id` | 대상 미션 id. 없으면 빈 문자열 |
+| `params_json` | 부가 정보 JSON |
+| 응답 `seq` | 서버가 부여한 수신 순번(1부터). 터미널 출력의 `#n` 과 대조한다 |
+
+```bash
+ros2 service call /dummy/notify dummy_node_interfaces/srv/Notify \
+  '{channel: "operator", level: "warn", code: "remaining_parcel",
+    mission_id: "m-001", params_json: "{\"tray\":0}"}'
+```
+
+출력 형태:
+
+```
+[notify] ── 수신 ────────────────────────────────────────────
+  경로     : /dummy/notify
+  channel  : operator
+  level    : warn
+  code     : remaining_parcel
+  mission  : m-001
+  params   : {"tray":0}
+  수신시각 : 18:49:50.915  (#1)
+──────────────────────────────────────────────────────────
+```
+
+**거부 모드** — 보고 실패 누적 경로(BT의 `report_fail_streak` → 한도 초과 이탈)를
+시험하기 위한 것이다. 켜면 수신 내용은 그대로 출력하되 `success=false` 를 돌려준다.
+
+```bash
+ros2 service call /dummy/notify/set_fail example_interfaces/srv/SetBool "{data: true}"
 ```
