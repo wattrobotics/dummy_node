@@ -18,3 +18,24 @@
     # 사람 인식 발행 주기(초). 실기 인식 노드의 주기에 맞춰 조정한다.
     # (WaitNewTask.md §9 T1 - person_stale_ms 가 이 주기 확정 후 정해진다)
     person_presence_period_sec: 0.1
+
+    # --- 공유: load_cell + tray_door ---
+    # 적재함 단(tray) 개수. 0 = 상단. 두 인터페이스가 공유한다.
+    tray_count: 2
+
+    # --- load_cell (TakeParcelScreen.md §3.2) ---
+    load_cell_period_sec: 0.1          # 로드셀 상태 발행 주기(초)
+    initial_load_cell_occupied: false  # 시작 시 물건 감지 여부(전 tray)
+    initial_load_cell_healthy: true    # 시작 시 로드셀 정상 여부(전 tray)
+    # occupied 일 때 보고할 무게(g). weight_g 는 스펙상 진단용이며 BT 판정에
+    # 쓰이지 않으므로, 별도 설정 수단 없이 occupied 로부터 파생시킨다.
+    occupied_weight_g: 1000.0
+
+    # --- tray_door (TakeParcelScreen.md §3.3) ---
+    initial_doors_open: false          # 시작 시 문 열림 여부(전 tray)
+    tray_door_state_period_sec: 0.2    # 문 상태 발행 주기(초)
+    door_open_duration_sec: 2.0        # 열기 개시 -> 완전 열림까지 걸리는 시간
+    door_close_duration_sec: 2.0       # 닫기 개시 -> 완전 닫힘까지 걸리는 시간
+    # CloseTrayDoor 1회 goal 의 제한 시간. 끼임이 해소되지 않으면 이 시간에 걸려
+    # ERROR_TIMEOUT 이 된다(force=true 로 계속 시도하는 경우).
+    door_close_timeout_sec: 10.0

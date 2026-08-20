@@ -70,3 +70,19 @@ class InterfaceBase:
         raise NotImplementedError(
             f"{type(self).__name__}는 setup()을 구현해야 합니다."
         )
+
+    def param(self, name: str, default):
+        """파라미터를 선언하고 값을 돌려준다. 이미 선언돼 있으면 기존 값을 읽는다.
+
+        모든 인터페이스가 **하나의 노드**를 공유하므로, 둘 이상의 인터페이스가 같은
+        파라미터(예: `tray_count`)를 쓰면 두 번째 `declare_parameter` 가
+        `ParameterAlreadyDeclaredException` 으로 죽는다. 인터페이스 로드는 개별
+        try/except 로 감싸여 있어(`node.py`) 노드는 살아남지만 **해당 인터페이스만
+        조용히 빠진다** — 발견하기 어려운 형태의 고장이다.
+
+        이 헬퍼를 쓰면 선언 순서에 무관하게 같은 값을 얻는다. 공유 파라미터는
+        반드시 이것을 쓴다.
+        """
+        if self.node.has_parameter(name):
+            return self.node.get_parameter(name).value
+        return self.node.declare_parameter(name, default).value

@@ -1,0 +1,10 @@
+# 더미 제어용: tray 단위 bool 값 설정 (로드셀 occupied/healthy, 문 끼임 감지 등).
+#
+# 실기 인터페이스가 아니라 **테스트에서 더미 상태를 조작하는 수단**이다.
+# trays 규약은 OpenTrayDoor 와 동일하게 맞춘다 — 빈 배열 = 전체.
+int32[] trays        # 대상 tray 목록(0=상단). 빈 배열 = 전체 tray
+bool value
+---
+bool success
+string message
+int32[] applied      # 실제로 적용된 tray

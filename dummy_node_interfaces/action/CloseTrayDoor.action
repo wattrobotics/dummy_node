@@ -1,0 +1,19 @@
+# 적재함 문 닫기. (TakeParcelScreen.md §3.3.2)
+#
+# 서비스가 아니라 액션인 이유: 닫기는 사람 손·물건 끼임으로 실패와 중단이 실재하고,
+# 완료까지 시간이 걸리며, 진행 중 취소(사용자가 다시 열려는 경우)가 필요하다.
+int32[] trays        # 닫을 tray 목록(0=상단). 빈 배열 = 전체
+bool force           # true = 끼임 감지에도 계속 시도. 기본 false(안전 기본값)
+---
+bool success         # 대상 전체가 닫혔는가
+int32[] closed
+int32[] failed
+uint8 ERROR_NONE=0
+uint8 ERROR_OBSTRUCTED=1
+uint8 ERROR_TIMEOUT=2
+uint8 ERROR_ABORTED=3
+uint8 error
+string message
+---
+int32[] remaining    # 아직 닫히지 않은 tray
+bool obstructed      # 현재 끼임 감지 중

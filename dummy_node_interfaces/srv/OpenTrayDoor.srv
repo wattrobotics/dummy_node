@@ -1,0 +1,7 @@
+# 적재함 문 열기. 열기 **개시**를 지시하며, 완료 확인은 TrayDoorState 로 한다.
+# (TakeParcelScreen.md §3.3.1)
+int32[] trays        # 열 tray 목록(0=상단). 빈 배열 = 전체 tray
+---
+bool success         # **명령 수락 여부**. 열렸다는 뜻이 아니다
+string message
+int32[] accepted     # 열기를 개시한 tray
