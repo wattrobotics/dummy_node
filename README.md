@@ -35,9 +35,11 @@ dummy_node/                        # git repo 루트 (멀티패키지)
 │           ├── demo_add_two_ints_service.py # Service Server 예시
 │           ├── demo_fibonacci_action.py     # Action Server 예시
 │           ├── robot_side_door.py           # SetBool 서비스 + Bool status 퍼블리셔
-│           └── robot_floor.py               # 층 이동 (SetInt 서비스 2종 + Int32 퍼블리셔)
+│           ├── robot_floor.py               # 층 이동 (SetInt 서비스 2종 + Int32 퍼블리셔)
+│           └── person_presence.py           # 사람 인식 스텁 (PersonPresence 퍼블리셔 + SetBool 토글)
 └── dummy_node_interfaces/         # ament_cmake 패키지 (커스텀 인터페이스)
-    └── srv/SetInt.srv             # 정수 값 설정용 범용 서비스
+    ├── srv/SetInt.srv             # 정수 값 설정용 범용 서비스
+    └── msg/PersonPresence.msg     # 사람 인식 결과 (Header + is_person)
 ```
 
 ### 새 인터페이스 추가법
@@ -97,6 +99,8 @@ ros2 launch dummy_node dummy_node.launch.py initial_floor:=3
 | Service | `/dummy/robot/set_current_floor` | `dummy_node_interfaces/srv/SetInt` (즉시 층 변경) |
 | Service | `/dummy/robot/set_target_floor` | `dummy_node_interfaces/srv/SetInt` (1층/초 이동) |
 | Publisher | `/dummy/robot/current_floor` | `example_interfaces/msg/Int32` (현재 층, 1Hz) |
+| Publisher | `/dummy/person_presence` | `dummy_node_interfaces/msg/PersonPresence` (사람 인식, 기본 10Hz, volatile) |
+| Service | `/dummy/person_presence/set` | `example_interfaces/srv/SetBool` (`is_person` 토글) |
 
 ### 층(floor) 규칙
 
@@ -107,3 +111,28 @@ ros2 launch dummy_node dummy_node.launch.py initial_floor:=3
 # 초기 층을 config로 지정하여 실행
 ros2 run dummy_node dummy_node --ros-args -p initial_floor:=3
 ```
+
+### 사람 인식(person_presence)
+
+`docs/spec/tasks/WaitNewTask.md` §3.6 규격의 스텁이다. 실제 인식 노드가 없는 단계에서
+BT의 사람인식 조건 노드를 시험하는 데 쓴다.
+
+- 토픽 `/dummy/person_presence` — `Header header` + `bool is_person`.
+  QoS는 **reliable · depth 1 · volatile**(스펙 지정). latch가 아니므로 과거의
+  `is_person=true` 가 재구독 시 되살아나지 않는다.
+- `header.stamp` 는 발행 시점 시계로 매번 갱신한다. BT는
+  `now - header.stamp > person_stale_ms` 면 사람 없음으로 간주한다.
+- 값은 서비스로 토글한다.
+
+```bash
+# 사람 있음으로 전환
+ros2 service call /dummy/person_presence/set example_interfaces/srv/SetBool "{data: true}"
+# 사람 없음으로 전환
+ros2 service call /dummy/person_presence/set example_interfaces/srv/SetBool "{data: false}"
+
+# 발행 확인
+ros2 topic echo /dummy/person_presence
+```
+
+파라미터: `initial_is_person`(기본 `false`), `person_presence_period_sec`(기본 `0.1`).
+발행 주기는 실기 인식 노드 주기가 정해지면 그에 맞춰 조정한다(스펙 T1과 연동).
