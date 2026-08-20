@@ -26,17 +26,21 @@ ROS2 Jazzy 기반 **더미 / 테스트 하네스 노드** 모음 패키지.
 ```
 dummy_node/                        # git repo 루트 (멀티패키지)
 ├── dummy_node/                    # ament_python 패키지 (노드 본체)
-│   └── dummy_node/
-│       ├── node.py                # 코어 노드. interfaces/ 를 스캔해 자동 로드 (수정 불필요)
-│       ├── registry.py            # InterfaceBase + @register 데코레이터 + 자동 탐색
-│       └── interfaces/            # 인터페이스 구현 (여기에 파일만 추가하면 확장 완료)
-│           ├── demo_string_publisher.py     # Topic Publisher 예시
-│           ├── demo_string_subscriber.py    # Topic Subscriber 예시
-│           ├── demo_add_two_ints_service.py # Service Server 예시
-│           ├── demo_fibonacci_action.py     # Action Server 예시
-│           ├── robot_side_door.py           # SetBool 서비스 + Bool status 퍼블리셔
-│           ├── robot_floor.py               # 층 이동 (SetInt 서비스 2종 + Int32 퍼블리셔)
-│           └── person_presence.py           # 사람 인식 스텁 (PersonPresence 퍼블리셔 + SetBool 토글)
+│   ├── dummy_node/
+│   │   ├── node.py                # 코어 노드. interfaces/ 를 스캔해 자동 로드 (수정 불필요)
+│   │   ├── registry.py            # InterfaceBase + @register 데코레이터 + 자동 탐색
+│   │   └── interfaces/            # 인터페이스 구현 (여기에 파일만 추가하면 확장 완료)
+│   │       ├── demo_string_publisher.py     # Topic Publisher 예시
+│   │       ├── demo_string_subscriber.py    # Topic Subscriber 예시
+│   │       ├── demo_add_two_ints_service.py # Service Server 예시
+│   │       ├── demo_fibonacci_action.py     # Action Server 예시
+│   │       ├── robot_side_door.py           # SetBool 서비스 + Bool status 퍼블리셔
+│   │       ├── robot_floor.py               # 층 이동 (SetInt 서비스 2종 + Int32 퍼블리셔)
+│   │       └── person_presence.py           # 사람 인식 (PersonPresence 퍼블 + SetBool 토글)
+│   ├── config/
+│   │   └── dummy_node.yaml        # 파라미터 기본값 (모든 파라미터는 여기서 관리)
+│   └── launch/
+│       └── dummy_node.launch.py   # config_file 인자로 YAML 경로 지정
 └── dummy_node_interfaces/         # ament_cmake 패키지 (커스텀 인터페이스)
     ├── srv/SetInt.srv             # 정수 값 설정용 범용 서비스
     └── msg/PersonPresence.msg     # 사람 인식 결과 (Header + is_person)
@@ -47,8 +51,11 @@ dummy_node/                        # git repo 루트 (멀티패키지)
 1. `interfaces/` 안에 새 `.py` 파일 생성.
 2. `InterfaceBase`를 상속한 클래스에 `@register` 데코레이터를 붙인다.
 3. `setup()` 안에서 원하는 ROS 엔티티(publisher/subscriber/service/action)를 생성.
+4. 파라미터가 필요하면 `setup()` 에서 `declare_parameter()` 로 선언하고,
+   기본값 항목을 `config/dummy_node.yaml` 에 추가한다.
 
 코어 노드는 기동 시 `interfaces/` 폴더를 자동 스캔하므로 `node.py`는 절대 손대지 않는다.
+런치 파일도 파라미터 파일 경로만 넘기므로 파라미터가 늘어도 수정하지 않는다.
 
 > **네임스페이스 규칙:** 모든 topic/service/action 이름은 `dummy/` 하위에 있어야 한다.
 > 코어 노드가 `namespace="dummy"`로 생성되므로, 인터페이스는 **상대 이름**(예: `"my_topic"`)만
@@ -71,6 +78,25 @@ class MyPublisher(InterfaceBase):
         self._pub.publish(String(data="hi"))
 ```
 
+## 파라미터 (config)
+
+모든 파라미터는 **`config/dummy_node.yaml`** 한 곳에서 관리한다. 인터페이스가 파라미터를
+추가할 때 이 파일에만 항목을 넣으면 되고, **런치 파일은 수정하지 않는다.**
+
+| 파라미터 | 타입 | 기본값 | 소유 인터페이스 | 의미 |
+|---|---|---|---|---|
+| `initial_floor` | int | `1` | `robot_floor` | 시작 층 (0층 부재, 지하 1층=-1) |
+| `initial_is_person` | bool | `false` | `person_presence` | 시작 시 사람 인식 값 |
+| `person_presence_period_sec` | double | `0.1` | `person_presence` | 사람 인식 발행 주기(초) |
+
+> **YAML 키는 FQN(`/dummy/dummy_node`)이어야 한다.** 코어 노드가 코드에서
+> `namespace="dummy"` 로 생성되므로 완전한 노드 이름이 `/dummy/dummy_node` 다.
+> `dummy_node:` 만 쓰면 **적용되지 않고 조용히 무시된다**(실측 확인).
+
+> **동적 파라미터는 미지원이다.** 각 인터페이스는 `setup()` 에서 값을 1회만 읽으므로
+> `ros2 param set` 은 반영되지 않는다. 런타임 상태 변경은 파라미터가 아니라
+> 서비스(`/dummy/robot/set_current_floor`, `/dummy/person_presence/set` 등)로 한다.
+
 ## 빌드 & 실행
 
 ```bash
@@ -81,9 +107,11 @@ source install/setup.bash
 # 직접 실행
 ros2 run dummy_node dummy_node
 
-# 런치 파일로 실행 (권장)
+# 런치 파일로 실행 (권장). 파라미터는 config/dummy_node.yaml 에서 읽는다.
 ros2 launch dummy_node dummy_node.launch.py
-ros2 launch dummy_node dummy_node.launch.py initial_floor:=3
+
+# 다른 config 파일로 실행
+ros2 launch dummy_node dummy_node.launch.py config_file:=/path/to/my_dummy.yaml
 ```
 
 기본 제공 인터페이스 (모두 `dummy/` 네임스페이스 하위):
@@ -108,7 +136,7 @@ ros2 launch dummy_node dummy_node.launch.py initial_floor:=3
 - 초기 층은 파라미터 `initial_floor`(config)로 설정, 기본값 `1`.
 
 ```bash
-# 초기 층을 config로 지정하여 실행
+# 단일 값만 임시로 바꾸는 경우
 ros2 run dummy_node dummy_node --ros-args -p initial_floor:=3
 ```
 

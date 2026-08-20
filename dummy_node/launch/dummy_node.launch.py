@@ -1,55 +1,48 @@
 """dummy_node 실행용 런치 파일.
 
+파라미터는 모두 YAML 파일(`config/dummy_node.yaml`)로 관리한다. 인터페이스가 파라미터를
+추가해도 이 런치 파일은 수정하지 않는다 — YAML에만 항목을 넣으면 된다.
+
 사용 예:
+    # 설치된 기본 config 사용
     ros2 launch dummy_node dummy_node.launch.py
-    ros2 launch dummy_node dummy_node.launch.py initial_floor:=3
-    ros2 launch dummy_node dummy_node.launch.py initial_is_person:=true
+
+    # 다른 config 파일로 실행 (기본 파일을 복사해 수정한 뒤 경로 지정)
+    ros2 launch dummy_node dummy_node.launch.py config_file:=/path/to/my_dummy.yaml
+
+단일 값만 임시로 바꾸려면 run 쪽 override가 더 간단하다:
+    ros2 run dummy_node dummy_node --ros-args \
+        --params-file <config> -p initial_floor:=3
 """
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description() -> LaunchDescription:
-    initial_floor = LaunchConfiguration("initial_floor")
-    initial_is_person = LaunchConfiguration("initial_is_person")
-    person_presence_period_sec = LaunchConfiguration("person_presence_period_sec")
+    config_file = LaunchConfiguration("config_file")
+
+    default_config = PathJoinSubstitution([
+        FindPackageShare("dummy_node"), "config", "dummy_node.yaml",
+    ])
 
     return LaunchDescription([
         DeclareLaunchArgument(
-            "initial_floor",
-            default_value="1",
-            description="시작 시 로봇의 초기 층 (0층은 존재하지 않음, 지하 1층=-1)",
-        ),
-        DeclareLaunchArgument(
-            "initial_is_person",
-            default_value="false",
-            description="시작 시 사람 인식 값 (/dummy/person_presence/set 서비스로 변경 가능)",
-        ),
-        DeclareLaunchArgument(
-            "person_presence_period_sec",
-            default_value="0.1",
-            description="사람 인식 발행 주기(초). 실기 인식 노드 주기에 맞춰 조정한다",
+            "config_file",
+            default_value=default_config,
+            description="파라미터 YAML 파일 경로 (기본: 패키지에 설치된 config/dummy_node.yaml)",
         ),
         Node(
             package="dummy_node",
             executable="dummy_node",
             name="dummy_node",
             # namespace는 노드 코드에서 'dummy'로 고정되어 있으므로 여기서 지정하지 않는다.
+            # 따라서 YAML의 키도 FQN인 '/dummy/dummy_node' 여야 한다.
             output="screen",
             emulate_tty=True,
-            parameters=[{
-                # 런치 인자는 문자열이므로 int로 캐스팅 (코드에서 int로 선언됨).
-                "initial_floor": ParameterValue(initial_floor, value_type=int),
-                "initial_is_person": ParameterValue(
-                    initial_is_person, value_type=bool
-                ),
-                "person_presence_period_sec": ParameterValue(
-                    person_presence_period_sec, value_type=float
-                ),
-            }],
+            parameters=[config_file],
         ),
     ])

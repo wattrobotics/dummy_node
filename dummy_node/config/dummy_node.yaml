@@ -1,0 +1,20 @@
+# dummy_node 파라미터 기본값.
+#
+# 키가 `/dummy/dummy_node` 인 이유: 코어 노드가 코드에서 namespace="dummy" 로 생성되므로
+# 완전한 노드 이름(FQN)이 `/dummy/dummy_node` 다. 파라미터 파일의 키는 FQN과 일치해야
+# 적용되며, `dummy_node:` 만 쓰면 무시된다.
+#
+# 새 인터페이스가 파라미터를 추가할 때 이 파일에만 항목을 넣으면 되고,
+# 런치 파일은 수정하지 않는다.
+/dummy/dummy_node:
+  ros__parameters:
+    # --- robot_floor ---
+    # 시작 층. 0층은 존재하지 않으므로 0을 넣으면 경고 후 1로 대체된다. 지하 1층 = -1.
+    initial_floor: 1
+
+    # --- person_presence ---
+    # 시작 시 사람 인식 값. 런타임 변경은 /dummy/person_presence/set 서비스로 한다.
+    initial_is_person: false
+    # 사람 인식 발행 주기(초). 실기 인식 노드의 주기에 맞춰 조정한다.
+    # (WaitNewTask.md §9 T1 - person_stale_ms 가 이 주기 확정 후 정해진다)
+    person_presence_period_sec: 0.1
