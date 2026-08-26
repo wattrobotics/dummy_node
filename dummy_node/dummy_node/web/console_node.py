@@ -10,9 +10,12 @@
 
 from __future__ import annotations
 
+import errno
+import sys
 import threading
 
 import rclpy
+from rcl_interfaces.msg import ParameterType
 from rcl_interfaces.srv import GetParameters
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -88,6 +91,8 @@ class DummyWebNode(Node):
         self._web_host = str(self.declare_parameter("web_host", "0.0.0.0").value)
         self._web_port = int(self.declare_parameter("web_port", 8080).value)
         self._web_timeout = float(self.declare_parameter("service_timeout_sec", 5.0).value)
+        # 희망 포트가 쓰이고 있을 때 다음 포트로 몇 번까지 옮겨 볼지. 1 = 옮기지 않는다.
+        self._web_port_tries = int(self.declare_parameter("web_port_max_tries", 10).value)
         initial_tray_count = int(self.declare_parameter("tray_count", 2).value)
 
         self.state = StateStore(initial_tray_count)
@@ -100,11 +105,19 @@ class DummyWebNode(Node):
         self._web_goal_lock = threading.Lock()
         self._web_goal_handle = None
 
-        self._assert_no_attr_collision(base_attrs)
-
         # `notify_fail` 은 토픽으로 관찰할 수 없다. dummy_node 의 파라미터 서비스로
         # 초기값을 한 번 읽어 화면의 초기 표시를 맞춘다(실패해도 무방 -> '알 수 없음').
-        threading.Thread(target=self._fetch_notify_fail, daemon=True).start()
+        #
+        # 이 조회를 **별도 스레드에서 하지 않는다.** 스레드가 rclpy 객체를 잡고 있는
+        # 사이에 기동이 실패해 인터프리터가 종료되면, C 확장 객체가 파괴되는 것과
+        # 겹쳐 SIGSEGV 로 죽는다(포트 점유로 기동에 실패했을 때 실제로 겪었다).
+        # executor 타이머로 옮기면 스레드 경계가 사라져 그 경합 자체가 없어진다.
+        self._web_param_attempts = 0
+        self._web_param_timer = self.create_timer(
+            1.0, self._poll_notify_fail, callback_group=self._web_cbg
+        )
+
+        self._assert_no_attr_collision(base_attrs)
 
     def _assert_no_attr_collision(self, base_attrs: set) -> None:
         """이 클래스가 만든 비공개 속성이 이름 규칙을 지키는지 기동 시 확인한다.
@@ -385,23 +398,41 @@ class DummyWebNode(Node):
     # ------------------------------------------------------------------ #
     # 파라미터 초기값 조회
     # ------------------------------------------------------------------ #
-    def _fetch_notify_fail(self) -> None:
-        """`notify_fail` 은 서비스 서버라 토픽으로 관찰할 수 없다.
+    # 파라미터 서비스는 dummy_node 가 늦게 뜨면 한동안 준비되지 않는다. 준비될
+    # 때까지 짧게 폴링하되 **한 번도 블록하지 않는다** — 블록하면 executor 스레드를
+    # 붙잡아 그 사이 들어온 요청이 밀린다.
+    PARAM_POLL_LIMIT = 15  # 초. 이 시간까지 못 읽으면 '알 수 없음' 으로 둔다
 
-        dummy_node 의 파라미터 서비스로 기동 시 값을 한 번 읽어 초기 표시를 맞춘다.
-        읽지 못하면 `None` 으로 두고 화면에 '알 수 없음' 으로 표시한다.
-        """
+    def _poll_notify_fail(self) -> None:
+        """파라미터 서비스가 준비되면 `notify_fail` 을 한 번 읽고 폴링을 끝낸다."""
+        self._web_param_attempts += 1
+
+        if not self._web_param_client.service_is_ready():
+            if self._web_param_attempts >= self.PARAM_POLL_LIMIT:
+                self._web_param_timer.cancel()
+                self.get_logger().warn(
+                    "notify_fail 초기값을 읽지 못했다(파라미터 서비스 미준비). "
+                    "화면에는 '알 수 없음' 으로 표시되며, 한 번 토글하면 정확해진다."
+                )
+            return
+
+        self._web_param_timer.cancel()
+        request = GetParameters.Request()
+        request.names = ["notify_fail"]
+        self._web_param_client.call_async(request).add_done_callback(
+            self._on_notify_fail_param
+        )
+
+    def _on_notify_fail_param(self, future) -> None:
+        """파라미터 응답을 화면 표시값에 반영한다. 실패해도 노드는 계속 간다."""
         try:
-            if not self._web_param_client.wait_for_service(timeout_sec=10.0):
-                return
-            request = GetParameters.Request()
-            request.names = ["notify_fail"]
-            response = self._call_sync(self._web_param_client, request)
-            values = response.values
-            if values and values[0].type == 1:  # PARAMETER_BOOL
-                self.state.set_notify_fail(values[0].bool_value)
+            values = future.result().values
         except Exception as exc:  # noqa: BLE001 - 초기 표시용이라 실패해도 계속 간다
             self.get_logger().warn(f"notify_fail 초기값 조회 실패: {exc}")
+            return
+
+        if values and values[0].type == ParameterType.PARAMETER_BOOL:
+            self.state.set_notify_fail(values[0].bool_value)
 
     # ------------------------------------------------------------------ #
     # 호출 헬퍼
@@ -427,34 +458,100 @@ class DummyWebNode(Node):
 
     # ------------------------------------------------------------------ #
     @property
-    def http_bind(self) -> tuple[str, int]:
-        return self._web_host, self._web_port
+    def http_bind(self) -> tuple[str, int, int]:
+        return self._web_host, self._web_port, self._web_port_tries
 
 
-def main(args=None):
+def _report_bind_failure(logger, exc: OSError, host: str, port: int, tries: int) -> None:
+    """웹 콘솔 소켓을 열지 못한 이유를 사람이 읽고 바로 조치할 수 있게 남긴다.
+
+    raw traceback 만 남기면 "무엇을 해야 하는지" 를 알 수 없다. 특히 포트 점유는
+    이전 dummy_web 이 남아 있는 흔한 상황이라 조치까지 함께 적는다.
+    """
+    if exc.errno == errno.EADDRINUSE:
+        logger.error(
+            f"웹 콘솔을 열 수 없다 — {port} 부터 {port + tries - 1} 까지 모두 사용 중이다.\n"
+            f"  무엇이 쓰는지 확인 : ss -ltnp 'sport >= :{port}'\n"
+            f"  이전 dummy_web 정리: pkill -f dummy_web\n"
+            f"  다른 포트 대역 사용: ros2 run dummy_node dummy_web "
+            f"--ros-args -p web_port:=9000\n"
+            f"  기본 포트 변경     : config/dummy_node.yaml 의 web_port\n"
+            f"  웹 없이 실행       : ros2 launch dummy_node dummy_node.launch.py "
+            f"enable_web:=false"
+        )
+    elif exc.errno == errno.EACCES:
+        logger.error(
+            f"웹 콘솔을 열 수 없다 — 포트 {port} 에 접근할 권한이 없다.\n"
+            f"  1024 미만 포트는 관리자 권한이 필요하다. web_port 를 1024 이상으로 바꾼다."
+        )
+    elif exc.errno == errno.EADDRNOTAVAIL:
+        logger.error(
+            f"웹 콘솔을 열 수 없다 — '{host}' 는 이 머신의 주소가 아니다.\n"
+            f"  config 의 web_host 를 0.0.0.0(전체 개방) 또는 127.0.0.1(로컬 전용)로 바꾼다."
+        )
+    else:
+        logger.error(f"웹 콘솔을 열 수 없다 — {host}:{port} 바인딩 실패: {exc}")
+
+
+def main(args=None) -> int:
     rclpy.init(args=args)
-    node = DummyWebNode()
 
-    host, port = node.http_bind
-    server = ConsoleHttpServer(node, host, port)
-    server.start()
-    node.get_logger().info(
-        f"웹 콘솔 대기: http://{'localhost' if host == '0.0.0.0' else host}:{port}"
-        + (" (같은 망의 다른 기기에서도 접속 가능)" if host == "0.0.0.0" else "")
-    )
-
-    executor = MultiThreadedExecutor()
-    executor.add_node(node)
+    node = None
+    server = None
+    exit_code = 0
     try:
+        node = DummyWebNode()
+        host, port, tries = node.http_bind
+
+        try:
+            server = ConsoleHttpServer(node, host, port, tries)
+        except OSError as exc:
+            # 여기서 그냥 예외를 올리면 정리 없이 인터프리터가 끝나고, rclpy 객체가
+            # 파괴되는 것과 겹쳐 SIGSEGV 로 죽는다. 반드시 finally 를 거쳐 나간다.
+            _report_bind_failure(node.get_logger(), exc, host, port, tries)
+            return 1
+
+        server.start()
+
+        if server.port != port:
+            # 접속할 주소가 달라졌으므로 조용히 넘어가면 안 된다. 특히 점유의 원인이
+            # 이전 dummy_web 이라면, 희망 포트로 접속했을 때 **옛 인스턴스**에
+            # 붙게 되므로 그 사실까지 알린다.
+            node.get_logger().warn(
+                f"포트 {port} 이(가) 사용 중이어서 {server.port} 로 열었다. "
+                f"{port} 에는 다른 프로세스(이전 dummy_web 일 수 있다)가 붙어 있으니 "
+                f"접속 주소를 혼동하지 않도록 주의한다."
+            )
+
+        shown_host = "localhost" if host == "0.0.0.0" else host
+        node.get_logger().info(
+            f"웹 콘솔 대기: http://{shown_host}:{server.port}"
+            + (" (같은 망의 다른 기기에서도 접속 가능)" if host == "0.0.0.0" else "")
+        )
+
+        executor = MultiThreadedExecutor()
+        executor.add_node(node)
         executor.spin()
     except KeyboardInterrupt:
         pass
+    except Exception as exc:  # noqa: BLE001 - 어떤 실패든 정리를 거쳐 나간다
+        exit_code = 1
+        if node is not None:
+            node.get_logger().error(f"웹 콘솔 노드가 실패했다: {exc}")
+        else:
+            print(f"[dummy_web] 노드를 만들지 못했다: {exc}", file=sys.stderr)
     finally:
-        server.stop()
-        node.destroy_node()
+        # 정리 순서가 중요하다. HTTP 스레드를 먼저 멈춰야 그 스레드가 이미 파괴된
+        # 노드로 ROS 호출을 시도하는 상황이 생기지 않는다.
+        if server is not None:
+            server.stop()
+        if node is not None:
+            node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 
+    return exit_code
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

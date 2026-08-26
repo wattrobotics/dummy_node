@@ -9,6 +9,7 @@ Python 표준 라이브러리만 쓴다. `rosbridge_suite`·`flask`·`tornado` �
 
 from __future__ import annotations
 
+import errno
 import json
 import mimetypes
 import threading
@@ -166,11 +167,35 @@ class ConsoleHandler(BaseHTTPRequestHandler):
 
 
 class ConsoleHttpServer:
-    """HTTP 서버를 데몬 스레드에서 돌린다. ROS executor 를 막지 않기 위함이다."""
+    """HTTP 서버를 데몬 스레드에서 돌린다. ROS executor 를 막지 않기 위함이다.
 
-    def __init__(self, node, host: str, port: int):
+    희망 포트가 이미 쓰이고 있으면 **다음 포트로 자동으로 옮겨 연다.** 점유의 흔한
+    원인이 이전 `dummy_web` 이 남아 있는 것인데, 그때마다 기동에 실패하면 더미를
+    띄우는 일 자체가 막히기 때문이다. 실제로 연 포트는 `port` 속성으로 알 수 있고,
+    호출자가 반드시 로그에 남겨야 한다 — 접속할 주소가 달라지기 때문이다.
+    """
+
+    def __init__(self, node, host: str, port: int, max_tries: int = 10):
         handler = type("BoundConsoleHandler", (ConsoleHandler,), {"node": node})
-        self._httpd = ThreadingHTTPServer((host, port), handler)
+
+        last_exc: OSError | None = None
+        for candidate in range(port, port + max(1, max_tries)):
+            try:
+                self._httpd = ThreadingHTTPServer((host, candidate), handler)
+            except OSError as exc:
+                # 점유 외의 이유(권한, 잘못된 host)는 다음 포트로 옮겨도 해결되지
+                # 않는다. 그대로 올려서 호출자가 원인에 맞는 안내를 하게 한다.
+                if exc.errno != errno.EADDRINUSE:
+                    raise
+                last_exc = exc
+                continue
+
+            self.port = candidate
+            self.requested_port = port
+            break
+        else:
+            raise last_exc
+
         self._httpd.daemon_threads = True
         self._thread = threading.Thread(
             target=self._httpd.serve_forever, name="dummy_web_http", daemon=True
