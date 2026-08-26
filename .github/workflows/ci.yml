@@ -1,0 +1,87 @@
+# PR 과 main 푸시마다 두 패키지가 실제로 빌드되고 노드가 뜨는지 확인한다.
+# 빌드만 보면 "빌드는 되는데 기동 중에 죽는" 고장(예: rclpy.Node 내부 속성을 덮어쓰는
+# 이름 충돌)을 놓치므로, 실제로 띄워서 웹 콘솔 응답까지 받아 본다.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: 빌드 및 기동 확인
+    runs-on: ubuntu-latest
+    container: ros:jazzy-ros-base
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+        with:
+          path: ros2_ws/src/dummy_node
+
+      # 의존성은 개별 패키지를 나열하지 않고 package.xml 선언을 그대로 따라간다.
+      # 하드코딩하면 새 의존성이 생길 때마다 CI 가 다시 깨진다.
+      - name: 의존성 설치
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            python3-colcon-common-extensions python3-rosdep curl
+          rosdep init 2>/dev/null || true
+          rosdep update
+          cd ros2_ws
+          rosdep install --from-paths src --ignore-src -y
+
+      - name: colcon build
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          cd ros2_ws
+          colcon build --packages-select dummy_node_interfaces dummy_node
+
+      - name: 노드 기동 · 상태 수신 · 서비스 호출 확인
+        shell: bash
+        env:
+          # CI 러너 밖으로 DDS 트래픽이 새지 않도록 탐색 범위를 로컬로 묶는다.
+          ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+        run: |
+          set -e
+          source /opt/ros/jazzy/setup.bash
+          cd ros2_ws
+          source install/setup.bash
+          CONFIG=install/dummy_node/share/dummy_node/config/dummy_node.yaml
+
+          # 백그라운드 프로세스는 스텝 경계를 넘어 살아있다고 보장되지 않는다.
+          # 기동부터 검증까지 한 스텝 안에서 끝낸다.
+          ros2 run dummy_node dummy_node --ros-args --params-file "$CONFIG" &
+          NODE_PID=$!
+          ros2 run dummy_node dummy_web --ros-args --params-file "$CONFIG" &
+          WEB_PID=$!
+          trap 'kill $NODE_PID $WEB_PID 2>/dev/null || true' EXIT
+
+          # 두 노드가 서로를 찾고 첫 토픽이 오갈 때까지 기다린다.
+          for _ in $(seq 30); do
+            if curl -sf http://localhost:8080/api/state > /dev/null; then break; fi
+            sleep 1
+          done
+
+          curl -sf http://localhost:8080/api/state -o state.json
+          curl -sf -X POST http://localhost:8080/api/service/person_set \
+            -H "Content-Type: application/json" -d '{"value":true}' -o call.json
+
+          python3 - <<'PY'
+          import json
+          import sys
+
+          state = json.load(open("state.json"))
+          missing = [k for k in ("person", "load_cell", "tray_door")
+                     if not state[k].get("seen")]
+          if missing:
+              sys.exit(f"토픽을 수신하지 못했다: {missing}")
+          print("토픽 수신 확인:", sorted(state))
+
+          call = json.load(open("call.json"))
+          if not call.get("ok") or not call["result"]["success"]:
+              sys.exit(f"서비스 호출 실패: {call}")
+          print("서비스 호출 확인:", call["result"]["message"])
+          PY
