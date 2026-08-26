@@ -32,6 +32,126 @@ ROS2 Jazzy 기반 **더미 / 테스트 하네스 노드** 모음 패키지.
 - ROS2 Jazzy
 - 패키지 2개: `dummy_node`(ament_python, 노드), `dummy_node_interfaces`(ament_cmake, 커스텀 srv/msg)
 
+## 새 머신에 설치하기
+
+아래 절차는 깨끗한 `ros:jazzy-ros-base` 환경에서 clone 부터 기동까지 실제로 수행해
+확인한 것이다.
+
+### 사전 조건
+
+- **Ubuntu 24.04 (Noble) + ROS2 Jazzy.** 이 패키지는 Jazzy 기준으로 만들었다.
+- ROS2 가 설치되어 있지 않다면 [공식 설치 문서](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html)를
+  따라 `ros-jazzy-ros-base` 이상을 먼저 설치한다.
+
+### 1. 빌드 도구 설치
+
+```bash
+sudo apt update
+sudo apt install -y git python3-colcon-common-extensions python3-rosdep curl
+```
+
+### 2. 워크스페이스에 clone
+
+저장소 루트가 **패키지 두 개를 담은 멀티패키지 루트**다. 따라서 워크스페이스의
+`src/` **안으로** clone 해야 하며, `src/` 자체를 저장소로 만들면 안 된다.
+
+```bash
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws/src
+git clone https://github.com/wntdev99/dummy_node.git
+```
+
+결과 구조는 다음과 같아야 한다.
+
+```
+~/ros2_ws/src/dummy_node/          # git repo 루트
+├── dummy_node/                    # ament_python 패키지
+└── dummy_node_interfaces/         # ament_cmake 패키지
+```
+
+### 3. 의존성 설치
+
+개별 패키지를 손으로 설치하지 말고 `rosdep` 에 맡긴다. `package.xml` 선언을 따라가므로
+나중에 의존성이 늘어도 이 명령 그대로 쓸 수 있다.
+
+```bash
+sudo rosdep init   # 이미 되어 있으면 오류가 나는데 무시해도 된다
+rosdep update
+cd ~/ros2_ws
+rosdep install --from-paths src --ignore-src -y
+```
+
+현재 실제로 설치되는 것은 `ros-jazzy-example-interfaces` 하나다.
+
+### 4. 빌드
+
+```bash
+cd ~/ros2_ws
+source /opt/ros/jazzy/setup.bash
+colcon build --packages-select dummy_node_interfaces dummy_node
+```
+
+> `dummy_node_interfaces` 를 **먼저** 빌드해야 한다. `--packages-select` 로 둘 다
+> 지정하면 colcon 이 의존 순서를 알아서 맞춘다.
+
+### 5. 통신 환경 맞추기 (가장 자주 놓치는 부분)
+
+빌드가 되어도 **BT 와 도메인·RMW 가 다르면 서로를 아예 발견하지 못한다.** 오류가 나지
+않고 조용히 통신만 되지 않으므로 원인을 찾기 어렵다. BT 가 도는 환경과 **같은 값**을 쓴다.
+
+```bash
+# ~/.bashrc 에 추가
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_ws/install/setup.bash
+
+export ROS_DOMAIN_ID=12                          # BT 쪽과 같은 값으로 맞춘다
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp     # BT 쪽과 같은 구현으로 맞춘다
+```
+
+`rmw_cyclonedds_cpp` 를 쓰려면 해당 패키지가 필요하다. 이는 `package.xml` 에 선언된
+의존성이 아니므로 `rosdep` 이 설치해 주지 않는다.
+
+```bash
+sudo apt install -y ros-jazzy-rmw-cyclonedds-cpp
+```
+
+> 두 값은 환경마다 다르다. 이 저장소를 개발한 머신은 `ROS_DOMAIN_ID=12` 를 쓰지만,
+> 시뮬레이터 컨테이너는 `10` 을 쓴다. **붙일 대상이 무엇인지 먼저 확인하고 맞춘다.**
+> 서로 발견하는지는 `ros2 node list` 로 상대 노드가 보이는지로 판단한다.
+
+### 6. 기동 및 확인
+
+```bash
+ros2 launch dummy_node dummy_node.launch.py
+```
+
+다음 세 가지가 모두 확인되면 정상이다.
+
+```bash
+# 노드 두 개가 떠 있는가
+ros2 node list | grep dummy        # /dummy/dummy_node, /dummy/dummy_web
+
+# 상태 토픽이 흐르는가
+ros2 topic echo /dummy/person_presence --once
+
+# 웹 콘솔이 응답하는가
+curl -s http://localhost:8080/api/state | head -c 200
+```
+
+브라우저에서 `http://localhost:8080`, 다른 기기에서는 `http://<그 머신의 IP>:8080` 으로
+접속한다. 웹 콘솔이 필요 없으면 `enable_web:=false` 로 끈다.
+
+### 문제가 생겼을 때
+
+| 증상 | 원인과 조치 |
+|---|---|
+| `Package 'dummy_node' not found` | `source ~/ros2_ws/install/setup.bash` 를 하지 않았다 |
+| `ModuleNotFoundError: example_interfaces` | 3단계 `rosdep install` 을 건너뛰었다 |
+| 노드는 뜨는데 BT 가 못 찾는다 | 5단계 `ROS_DOMAIN_ID` · `RMW_IMPLEMENTATION` 불일치다 |
+| 웹 콘솔에 "발행 끊김" 표시 | `dummy_node` 프로세스가 죽었다. 런치 로그를 확인한다 |
+| 다른 기기에서 접속되지 않는다 | 방화벽에서 8080 포트를 연다: `sudo ufw allow 8080/tcp` |
+| 포트 8080 이 이미 쓰인다 | config 의 `web_port` 를 바꾼다 |
+
 ## 구조
 
 ```
@@ -151,6 +271,9 @@ class MyPublisher(InterfaceBase):
 > 서비스(`/dummy/robot/set_current_floor`, `/dummy/person_presence/set` 등)로 한다.
 
 ## 빌드 & 실행
+
+이미 워크스페이스가 준비된 상태에서 다시 빌드하고 실행할 때 쓴다.
+처음 설치하는 머신이라면 [새 머신에 설치하기](#새-머신에-설치하기)를 먼저 본다.
 
 ```bash
 cd ~/ros2_ws
