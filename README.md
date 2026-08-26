@@ -5,6 +5,11 @@ ROS2 Jazzy 기반 **더미 / 테스트 하네스 노드** 모음 패키지.
 실제 비즈니스 로직 없이, 외부 도구·테스트가 다양한 방식으로 상호작용할 수 있는
 **테스트 대상(test target/fixture)** 노드들을 제공합니다.
 
+![dummy_node 웹 제어 콘솔](docs/images/web-console.png)
+
+브라우저에서 모든 더미 상태를 보면서 클릭으로 제어합니다
+(자세한 내용은 [웹 제어 콘솔](#웹-제어-콘솔) 참고).
+
 ## 목적
 
 외부에서 이 노드들을 상대로 다양한 ROS2 상호작용을 시험할 수 있게 한다.
@@ -456,6 +461,12 @@ ros2 service call /dummy/notify/set_fail example_interfaces/srv/SetBool "{data: 
 
 `ros2 service call` 을 손으로 입력하지 않고, **브라우저 화면 하나에서 모든 더미 상태를
 보면서 클릭으로 제어**한다. ROS 명령을 몰라도 BT 시나리오를 재현할 수 있다.
+
+![웹 제어 콘솔 화면](docs/images/web-console.png)
+
+위 화면은 실제로 시험 중인 상태다 — 사람 인식이 켜져 있고, tray 0 에 물건이 있으며,
+문 두 짝이 열려 있고 tray 1 에 끼임이 주입되어 직전 닫기가 `ERROR_OBSTRUCTED` 로
+끝난 이력이 이벤트에 남아 있다.
 
 ```bash
 ros2 launch dummy_node dummy_node.launch.py
