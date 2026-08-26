@@ -15,6 +15,7 @@ ROS2 Jazzy 기반 **더미 / 테스트 하네스 노드** 모음 패키지.
 - Service 요청 / 응답
 - Action goal / feedback / result / cancel
 - Parameter **읽기 전용** — 기동 시 config YAML로 초기값 주입 (아래 [파라미터](#파라미터-config) 참고)
+- **웹 제어 콘솔** — 브라우저에서 모든 더미 상태를 보면서 클릭으로 제어 (아래 [웹 제어 콘솔](#웹-제어-콘솔) 참고)
 
 **미지원**
 
@@ -39,7 +40,7 @@ dummy_node/                        # git repo 루트 (멀티패키지)
 │   ├── dummy_node/
 │   │   ├── node.py                # 코어 노드. interfaces/ 를 스캔해 자동 로드 (수정 불필요)
 │   │   ├── registry.py            # InterfaceBase + @register 데코레이터 + 자동 탐색
-│   │   └── interfaces/            # 인터페이스 구현 (여기에 파일만 추가하면 확장 완료)
+│   │   ├── interfaces/            # 인터페이스 구현 (여기에 파일만 추가하면 확장 완료)
 │   │       ├── demo_string_publisher.py     # Topic Publisher 예시
 │   │       ├── demo_string_subscriber.py    # Topic Subscriber 예시
 │   │       ├── demo_add_two_ints_service.py # Service Server 예시
@@ -50,6 +51,11 @@ dummy_node/                        # git repo 루트 (멀티패키지)
 │   │       ├── load_cell.py                 # 로드셀 (LoadCellState 퍼블 + occupied/healthy 토글)
 │   │       ├── tray_door.py                 # 적재함 문 (열기 srv + 닫기 action + 상태 토픽)
 │   │       └── notify.py                    # 알림 서버 (수신 내용을 터미널에 출력)
+│   │   └── web/                   # 웹 제어 콘솔 (별도 노드 `dummy_web`)
+│   │       ├── console_node.py    # ROS 노드. 상태 구독 + 서비스/액션 클라이언트
+│   │       ├── bridge.py          # 스레드 안전한 상태 스냅샷 보관소
+│   │       ├── http_server.py     # 표준 라이브러리 HTTP 서버 (REST + SSE)
+│   │       └── static/            # 화면 (index.html / app.js / style.css)
 │   ├── config/
 │   │   └── dummy_node.yaml        # 파라미터 기본값 (모든 파라미터는 여기서 관리)
 │   └── launch/
@@ -121,6 +127,15 @@ class MyPublisher(InterfaceBase):
 | `door_close_timeout_sec` | double | `10.0` | `tray_door` | `CloseTrayDoor` 1회 goal 제한 시간 |
 | `notify_fail` | bool | `false` | `notify` | 기동 시부터 알림 요청을 거부할지 |
 
+웹 제어 콘솔은 **별도 노드**이므로 YAML 키가 다르다(`/dummy/dummy_web`).
+
+| 파라미터 | 타입 | 기본값 | 의미 |
+|---|---|---|---|
+| `web_host` | string | `0.0.0.0` | 접속 개방 범위. `127.0.0.1` 이면 이 PC 전용 |
+| `web_port` | int | `8080` | HTTP 포트 |
+| `service_timeout_sec` | double | `5.0` | 서비스 응답 대기 한도(초) |
+| `tray_count` | int | `2` | 토픽 수신 전 화면에 그릴 tray 칸 수 (수신 후 자동 교정) |
+
 > **YAML 키는 FQN(`/dummy/dummy_node`)이어야 한다.** 코어 노드가 코드에서
 > `namespace="dummy"` 로 생성되므로 완전한 노드 이름이 `/dummy/dummy_node` 다.
 > `dummy_node:` 만 쓰면 **적용되지 않고 조용히 무시된다**(실측 확인).
@@ -150,6 +165,9 @@ ros2 launch dummy_node dummy_node.launch.py
 
 # 다른 config 파일로 실행
 ros2 launch dummy_node dummy_node.launch.py config_file:=/path/to/my_dummy.yaml
+
+# 웹 제어 콘솔 없이 실행
+ros2 launch dummy_node dummy_node.launch.py enable_web:=false
 ```
 
 기본 제공 인터페이스 (모두 `dummy/` 네임스페이스 하위):
@@ -310,3 +328,91 @@ ros2 service call /dummy/notify dummy_node_interfaces/srv/Notify \
 ```bash
 ros2 service call /dummy/notify/set_fail example_interfaces/srv/SetBool "{data: true}"
 ```
+
+## 웹 제어 콘솔
+
+`ros2 service call` 을 손으로 입력하지 않고, **브라우저 화면 하나에서 모든 더미 상태를
+보면서 클릭으로 제어**한다. ROS 명령을 몰라도 BT 시나리오를 재현할 수 있다.
+
+```bash
+ros2 launch dummy_node dummy_node.launch.py
+# 브라우저에서 http://localhost:8080 접속
+# 같은 망의 다른 기기에서는 http://<이 PC의 IP>:8080
+```
+
+기본값이 `0.0.0.0` 이라 같은 망의 다른 기기에서도 접속된다. **인증이 없으므로 신뢰된
+개발망에서만 쓴다.** 이 PC 전용으로 두려면 config 의 `web_host` 를 `127.0.0.1` 로 바꾼다.
+
+웹 없이 기존 동작만 필요하면 `enable_web:=false` 로 끈다.
+
+### 설계
+
+```
+[브라우저] ──HTTP + SSE──▶ [dummy_web 노드] ──ROS srv/action/topic──▶ [dummy_node]
+```
+
+- **더미의 내부 상태를 직접 만지지 않는다.** 화면의 조작은 전부 위에 정리된 ROS
+  서비스·액션 호출로 바뀐다. 그래서 BT 가 쓰는 경로와 **같은 경로**가 검증되고,
+  기존 `interfaces/*.py` 는 한 파일도 수정하지 않았다.
+- **화면은 자체 상태를 보관하지 않는다.** 표시값은 전부 수신한 토픽에서 나온다.
+  따라서 터미널에서 `ros2 service call` 로 바꾼 값도 화면에 그대로 반영되며,
+  웹과 터미널을 번갈아 써도 표시가 어긋나지 않는다.
+- **별도 프로세스**다. 같은 노드가 자기 서비스를 호출하는 형태를 피하기 위함이며,
+  덕분에 `dummy_node` 가 죽어도 웹은 살아남아 "발행 끊김" 을 화면에 표시하고,
+  재기동하면 자동으로 복구된다.
+- **외부 의존성이 없다.** Python 표준 라이브러리 `http.server` 만 쓰므로
+  `rosbridge_suite` 나 `flask` 를 설치할 필요가 없다.
+
+### 화면 구성
+
+| 카드 | 표시 | 조작 |
+|---|---|---|
+| 사람 인식 | `is_person`, `header.stamp` 경과(ms), 마지막 수신 경과 | 있음/없음 |
+| 층 | 현재 층 | 즉시 변경, 목표 설정 (0층은 입력 단계에서 차단) |
+| 알림 · 측면 문 | 알림 거부 모드, 측면 문 상태 | 거부 모드 토글, 문 열기/닫기 |
+| 로드셀 | tray별 `occupied` · `healthy` · `weight_g` | tray별 토글, 전체 일괄 |
+| 적재함 문 | tray별 상태(열림/닫힘/열리는 중/닫히는 중), 끼임, 닫기 goal 진행·결과 | 열기, 닫기(force), 취소, 끼임 주입 |
+| 이벤트 | 닫기 goal 개시·결과, 거부된 요청 | — |
+
+`header.stamp` 경과를 표시하는 이유는, BT 의 staleness 판정
+(`now - stamp > person_stale_ms`)을 화면에서 눈으로 확인하기 위함이다.
+
+문 상태는 `open`·`closed` 두 bool 에서 파생시킨다. 둘 다 `false` 면 이동 중인데,
+토픽만으로는 방향을 알 수 없으므로 마지막으로 지시한 명령으로 `열리는 중` 과
+`닫히는 중` 을 구분한다. 끼임·취소로 열림 복귀가 일어나면 방향 표시도 함께 뒤집힌다.
+
+### HTTP API
+
+화면을 거치지 않고 스크립트로 조작할 수도 있다.
+
+| 메서드 · 경로 | 동작 |
+|---|---|
+| `GET /api/state` | 현재 상태 스냅샷(JSON) 1회 |
+| `GET /api/events` | 상태 변화를 흘려보내는 SSE 스트림 (최대 5Hz) |
+| `POST /api/service/<key>` | 서비스 호출. `key` 는 서버가 가진 목록으로만 해석한다 |
+| `POST /api/action/close` | 닫기 goal 전송 (`{"trays": [], "force": false}`) |
+| `POST /api/action/close/cancel` | 진행 중인 닫기 goal 취소 |
+
+```bash
+# tray 0 만 물건 감지
+curl -X POST http://localhost:8080/api/service/load_cell_occupied \
+  -H "Content-Type: application/json" -d '{"trays":[0],"value":true}'
+
+# 전체 닫기 (끼임에도 계속 시도)
+curl -X POST http://localhost:8080/api/action/close \
+  -H "Content-Type: application/json" -d '{"trays":[],"force":true}'
+```
+
+`key` 는 `person_set`, `load_cell_occupied`, `load_cell_healthy`, `tray_door_open`,
+`tray_door_obstructed`, `floor_current`, `floor_target`, `side_door`, `notify_fail`
+아홉 개다. **목록에 없는 이름은 거부한다** — 웹이 `0.0.0.0` 으로 열려 있으므로,
+브라우저가 임의의 ROS 서비스를 호출할 수 있게 두지 않기 위함이다.
+
+### 알려진 제약
+
+- **알림 수신 내용은 웹에서 볼 수 없다.** `notify` 는 서비스 서버라 외부에서 관찰할
+  방법이 없다. 거부 모드 토글만 제공하며, 수신 전문은 기존대로 `dummy_node` 를 띄운
+  터미널에서 확인한다.
+- **인증·HTTPS 가 없다.** 신뢰된 개발망 전용이다.
+- 알림 거부 모드의 **초기 표시**는 기동 시 `dummy_node` 의 파라미터를 한 번 읽어
+  맞춘다. 읽지 못하면 `알 수 없음` 으로 표시되며, 한 번 토글하면 정확해진다.

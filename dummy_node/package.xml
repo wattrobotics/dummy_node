@@ -8,6 +8,8 @@
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
+  <!-- dummy_web 이 dummy_node 의 파라미터 초기값을 읽는 데 쓴다 -->
+  <depend>rcl_interfaces</depend>
   <depend>example_interfaces</depend>
   <depend>dummy_node_interfaces</depend>
 

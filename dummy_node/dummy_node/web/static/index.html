@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dummy_node 제어 콘솔</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>dummy_node 제어 콘솔</h1>
+    <div id="conn" class="conn">연결 중…</div>
+  </header>
+
+  <main>
+    <!-- 사람 인식 -->
+    <section class="card">
+      <h2>사람 인식 <span class="path">/dummy/person_presence</span></h2>
+      <div class="row">
+        <span id="person-value" class="badge">—</span>
+        <span id="person-age" class="meta"></span>
+      </div>
+      <div class="row">
+        <button data-service="person_set" data-value="true">사람 있음</button>
+        <button data-service="person_set" data-value="false">사람 없음</button>
+      </div>
+    </section>
+
+    <!-- 층 -->
+    <section class="card">
+      <h2>층 <span class="path">/dummy/robot/current_floor</span></h2>
+      <div class="row">
+        <span id="floor-value" class="badge big">—</span>
+        <span id="floor-age" class="meta"></span>
+      </div>
+      <div class="row">
+        <input type="number" id="floor-input" value="1" step="1">
+        <button id="floor-current">즉시 변경</button>
+        <button id="floor-target">목표 설정</button>
+      </div>
+      <p class="note">0층은 존재하지 않는다. 이동 시 1 ↔ -1 로 0을 건너뛴다.</p>
+    </section>
+
+    <!-- 알림 · 측면 문 -->
+    <section class="card">
+      <h2>알림 · 측면 문</h2>
+      <div class="row">
+        <span class="label">알림 거부 모드</span>
+        <span id="notify-value" class="badge">—</span>
+        <button data-service="notify_fail" data-value="true">거부 on</button>
+        <button data-service="notify_fail" data-value="false">거부 off</button>
+      </div>
+      <div class="row">
+        <span class="label">측면 문</span>
+        <span id="side-door-value" class="badge">—</span>
+        <button data-service="side_door" data-value="true">열기</button>
+        <button data-service="side_door" data-value="false">닫기</button>
+      </div>
+      <p class="note">알림 수신 내용은 dummy_node 를 띄운 터미널에서 확인한다.</p>
+    </section>
+
+    <!-- 로드셀 -->
+    <section class="card wide">
+      <h2>로드셀 <span class="path">/dummy/load_cell_state</span></h2>
+      <div id="load-cell-trays" class="tray-list"></div>
+      <div class="row">
+        <button data-service="load_cell_occupied" data-trays="[]" data-value="true">전체 감지 on</button>
+        <button data-service="load_cell_occupied" data-trays="[]" data-value="false">전체 감지 off</button>
+        <button data-service="load_cell_healthy" data-trays="[]" data-value="false">전체 고장</button>
+        <button data-service="load_cell_healthy" data-trays="[]" data-value="true">전체 정상</button>
+      </div>
+      <p class="note">weight_g 는 진단용이며 BT 판정에는 쓰이지 않는다. occupied 에서 파생된다.</p>
+    </section>
+
+    <!-- 적재함 문 -->
+    <section class="card wide">
+      <h2>적재함 문 <span class="path">/dummy/robot/tray_door/*</span></h2>
+      <div id="tray-doors" class="tray-list"></div>
+      <div class="row">
+        <button data-service="tray_door_open" data-trays="[]">전체 열기</button>
+        <button id="close-all">전체 닫기</button>
+        <label class="inline"><input type="checkbox" id="force"> force (끼임에도 계속 시도)</label>
+        <button id="cancel-close" class="danger" disabled>닫기 취소</button>
+      </div>
+      <div id="close-job" class="job"></div>
+    </section>
+
+    <!-- 이벤트 로그 -->
+    <section class="card wide">
+      <h2>이벤트</h2>
+      <div id="log" class="log"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
