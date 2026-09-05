@@ -177,3 +177,6 @@ label.inline {
 .log .warn { color: var(--warn); }
 .log .error { color: var(--err); }
 .log time { color: #5d636e; margin-right: 8px; }
+
+/* 실물 문 행 안의 goal 상태. flex-wrap 행에서 한 줄 전체를 차지하게 한다. */
+.tray .job { flex-basis: 100%; margin-top: 2px; }

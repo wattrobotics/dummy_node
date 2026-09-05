@@ -65,6 +65,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 )
             elif path == "/api/action/close/cancel":
                 result = self.node.cancel_close_goal()
+            elif path.startswith("/api/action/door/"):
+                result = self._door_action(path[len("/api/action/door/"):], body)
             else:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "없는 경로입니다."})
                 return
@@ -79,6 +81,19 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             return
 
         self._send_json(HTTPStatus.OK, {"ok": True, "result": result})
+
+    def _door_action(self, rest: str, body: dict):
+        """실물 문 goal. `/api/action/door/<idx>` 전송, `/api/action/door/<idx>/cancel` 취소."""
+        parts = rest.strip("/").split("/")
+        try:
+            idx = int(parts[0])
+        except (ValueError, IndexError) as exc:
+            raise BridgeError("문 인덱스는 정수여야 합니다 (0=top, 1=bottom).") from exc
+        if len(parts) == 1:
+            return self.node.send_door_goal(idx, str(body.get("command", "")))
+        if len(parts) == 2 and parts[1] == "cancel":
+            return self.node.cancel_door_goal(idx)
+        raise BridgeError("없는 경로입니다.")
 
     # ------------------------------------------------------------------ #
     # SSE 스트림

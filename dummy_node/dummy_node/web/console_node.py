@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import errno
+import functools
+import re
 import sys
 import threading
 
@@ -28,12 +30,18 @@ from rclpy.qos import (
     ReliabilityPolicy,
 )
 
+from action_msgs.msg import GoalStatus
 from example_interfaces.msg import Bool, Int32
 from example_interfaces.srv import SetBool
+from std_msgs.msg import String
 
 from dummy_node_interfaces.action import CloseTrayDoor
 from dummy_node_interfaces.msg import LoadCellState, PersonPresence, TrayDoorState
 from dummy_node_interfaces.srv import OpenTrayDoor, SetInt, SetTrayBool
+# 실물 모사 인터페이스(interfaces/phidget_load_cell.py · side_door.py)가 내는 실물 계약.
+from phidgets_hw.msg import LoadCellState as PhidgetLoadCellState
+from phidgets_hw.srv import ConfirmLoad, ConfirmUnload, SetTracking, Tare
+from w_ros2_controller_interfaces.action import DoorCommand
 
 from dummy_node.web.bridge import (
     INTENT_CLOSE,
@@ -52,6 +60,45 @@ CLOSE_ERROR_NAMES = {
     CloseTrayDoor.Result.ERROR_TIMEOUT: "ERROR_TIMEOUT",
     CloseTrayDoor.Result.ERROR_ABORTED: "ERROR_ABORTED",
 }
+
+# DoorCommand.Result.error_code -> 이름. .action 의 ERROR_* 상수에서 만들어 두 곳이 갈리지 않게 한다.
+DOOR_ERROR_NAMES = {
+    getattr(DoorCommand.Result, name): name
+    for name in dir(DoorCommand.Result)
+    if name.startswith("ERROR_")
+}
+DOOR_COMMANDS = (
+    DoorCommand.Goal.OPEN,
+    DoorCommand.Goal.CLOSE,
+    DoorCommand.Goal.UNLOCK,
+    DoorCommand.Goal.CALIBRATION,
+)
+GOAL_STATUS_NAMES = {
+    GoalStatus.STATUS_SUCCEEDED: "SUCCEEDED",
+    GoalStatus.STATUS_CANCELED: "CANCELED",
+    GoalStatus.STATUS_ABORTED: "ABORTED",
+}
+# 응답 message 로 tracking 표시를 갱신하는 서비스. tracking 은 토픽에 없다.
+TRACKING_KEYS = ("phidget_set_tracking", "phidget_confirm_load", "phidget_confirm_unload")
+
+
+def _tracking_from_message(message: str) -> dict[int, bool]:
+    """실물 로드셀 서비스 응답에서 tray 별 tracking 상태를 읽는다.
+
+    형식은 실물 노드와 같다: "tray_0: tracking resumed; tray_1: value frozen".
+    confirm_* 는 "…, frozen" 으로 끝난다. "unchanged" 는 정보가 없어 건너뛴다.
+    """
+    out: dict[int, bool] = {}
+    for segment in message.split(";"):
+        match = re.match(r"\s*tray_(\d+):\s*(.*)", segment)
+        if not match:
+            continue
+        text = match.group(2)
+        if "frozen" in text:
+            out[int(match.group(1))] = False
+        elif "resumed" in text:
+            out[int(match.group(1))] = True
+    return out
 
 
 def _int_list(value, field: str) -> list[int]:
@@ -94,8 +141,16 @@ class DummyWebNode(Node):
         # 희망 포트가 쓰이고 있을 때 다음 포트로 몇 번까지 옮겨 볼지. 1 = 옮기지 않는다.
         self._web_port_tries = int(self.declare_parameter("web_port_max_tries", 10).value)
         initial_tray_count = int(self.declare_parameter("tray_count", 2).value)
+        # 실물 문 컨트롤러 이름(인덱스 = tray). status 구독과 command 클라이언트를 이 이름으로
+        # 만들므로 dummy_node 쪽 side_door_controllers 와 같아야 한다.
+        self._web_side_door_names = [
+            str(n) for n in self.declare_parameter(
+                "side_door_controllers",
+                ["side_door_top_controller", "side_door_bottom_controller"],
+            ).value
+        ]
 
-        self.state = StateStore(initial_tray_count)
+        self.state = StateStore(initial_tray_count, self._web_side_door_names)
         self._web_cbg = ReentrantCallbackGroup()
 
         self._setup_subscriptions()
@@ -104,6 +159,9 @@ class DummyWebNode(Node):
         # 액션 goal 은 한 번에 하나만 다룬다 — 화면에도 진행 중인 닫기는 하나만 보인다.
         self._web_goal_lock = threading.Lock()
         self._web_goal_handle = None
+        # 실물 문 goal 은 문마다 하나씩 추적한다. 진행 중에 새 goal 을 보내면 컨트롤러가
+        # 기존 goal 을 선점(abort)한다 — 실물 계약이므로 막지 않고 그 결과를 그대로 보여 준다.
+        self._web_door_handles = [None] * len(self._web_side_door_names)
 
         # `notify_fail` 은 토픽으로 관찰할 수 없다. dummy_node 의 파라미터 서비스로
         # 초기값을 한 번 읽어 화면의 초기 표시를 맞춘다(실패해도 무방 -> '알 수 없음').
@@ -178,6 +236,19 @@ class DummyWebNode(Node):
             10, callback_group=self._web_cbg,
         )
 
+        # 실물 모사 인터페이스는 실물 이름(절대 이름)을 낸다 — README 의 네임스페이스 예외.
+        self.create_subscription(
+            PhidgetLoadCellState, "/load_cell_state", self._on_phidget_load_cell,
+            volatile_qos, callback_group=self._web_cbg,
+        )
+        for idx, ctrl in enumerate(self._web_side_door_names):
+            # 실물 컨트롤러는 SystemDefaultsQoS(reliable · volatile · depth 10)로 낸다.
+            self.create_subscription(
+                String, f"/{ctrl}/status",
+                functools.partial(self._on_side_door_status, idx),
+                10, callback_group=self._web_cbg,
+            )
+
     def _stamp_age_ms(self, stamp) -> float:
         """`header.stamp` 로부터 지난 시간(ms). BT 의 staleness 판정과 같은 계산이다."""
         now_ns = self.get_clock().now().nanoseconds
@@ -217,6 +288,21 @@ class DummyWebNode(Node):
     def _on_side_door(self, msg: Bool) -> None:
         self.state.set_side_door(msg.data)
 
+    def _on_phidget_load_cell(self, msg: PhidgetLoadCellState) -> None:
+        trays = [
+            {
+                "tray": t.tray,
+                "occupied": t.occupied,
+                "healthy": t.healthy,
+                "weight_g": round(float(t.weight_g), 1),
+            }
+            for t in msg.trays
+        ]
+        self.state.set_phidget_load_cell(trays, self._stamp_age_ms(msg.header.stamp))
+
+    def _on_side_door_status(self, idx: int, msg: String) -> None:
+        self.state.set_side_door_status(idx, msg.data)
+
     # ------------------------------------------------------------------ #
     # 서비스 클라이언트 (화이트리스트)
     # ------------------------------------------------------------------ #
@@ -234,10 +320,24 @@ class DummyWebNode(Node):
             "floor_target": client(SetInt, "robot/set_target_floor"),
             "side_door": client(SetBool, "robot/open_side_door"),
             "notify_fail": client(SetBool, "notify/set_fail"),
+            # 실물 모사 — 실물 계약은 절대 이름, 더미 조작은 규칙대로 /dummy/ 아래.
+            "phidget_set_tracking": client(SetTracking, "/phidget_load_cell/set_tracking"),
+            "phidget_confirm_load": client(ConfirmLoad, "/phidget_load_cell/confirm_load"),
+            "phidget_confirm_unload": client(ConfirmUnload, "/phidget_load_cell/confirm_unload"),
+            "phidget_tare": client(Tare, "/phidget_load_cell/tare"),
+            "phidget_occupied": client(SetTrayBool, "phidget_load_cell/set_occupied"),
+            "phidget_healthy": client(SetTrayBool, "phidget_load_cell/set_healthy"),
+            "side_door_obstructed": client(SetTrayBool, "side_door/set_obstructed"),
+            "side_door_manual": client(SetTrayBool, "side_door/manual_move"),
         }
         self._web_close_client = ActionClient(
             self, CloseTrayDoor, "robot/tray_door/close", callback_group=self._web_cbg
         )
+        # 실물 문은 컨트롤러(문)마다 액션 서버가 따로다.
+        self._web_door_clients = [
+            ActionClient(self, DoorCommand, f"/{ctrl}/command", callback_group=self._web_cbg)
+            for ctrl in self._web_side_door_names
+        ]
         self._web_param_client = client(GetParameters, "dummy_node/get_parameters")
 
     def call_service(self, key: str, body: dict) -> dict:
@@ -267,7 +367,10 @@ class DummyWebNode(Node):
             request.data = _bool(body.get("value"), "value")
             return request
 
-        if key in ("load_cell_occupied", "load_cell_healthy", "tray_door_obstructed"):
+        if key in (
+            "load_cell_occupied", "load_cell_healthy", "tray_door_obstructed",
+            "phidget_occupied", "phidget_healthy", "side_door_obstructed", "side_door_manual",
+        ):
             request = SetTrayBool.Request()
             request.trays = _int_list(body.get("trays"), "trays")
             request.value = _bool(body.get("value"), "value")
@@ -275,6 +378,22 @@ class DummyWebNode(Node):
 
         if key == "tray_door_open":
             request = OpenTrayDoor.Request()
+            request.trays = _int_list(body.get("trays"), "trays")
+            return request
+
+        if key == "phidget_set_tracking":
+            request = SetTracking.Request()
+            request.trays = _int_list(body.get("trays"), "trays")
+            request.enable = _bool(body.get("value"), "value")
+            return request
+
+        if key in ("phidget_confirm_load", "phidget_confirm_unload", "phidget_tare"):
+            srv_type = {
+                "phidget_confirm_load": ConfirmLoad,
+                "phidget_confirm_unload": ConfirmUnload,
+                "phidget_tare": Tare,
+            }[key]
+            request = srv_type.Request()
             request.trays = _int_list(body.get("trays"), "trays")
             return request
 
@@ -293,6 +412,10 @@ class DummyWebNode(Node):
 
     def _after_call(self, key: str, body: dict, response) -> None:
         """호출이 성공했을 때 화면 표시에만 쓰는 부수 상태를 갱신한다."""
+        if key in TRACKING_KEYS:
+            # 부분 성공(일부 tray 만 동결)이 있으므로 성공 여부와 무관하게 응답 전문을 읽는다.
+            self.state.set_tracking(_tracking_from_message(response.message))
+
         if not response.success:
             self.state.add_log("warn", f"{key} 거부됨: {response.message}")
             return
@@ -396,6 +519,103 @@ class DummyWebNode(Node):
         self.state.add_log(level, f"닫기 결과: {error_name} — {result.message}")
 
     # ------------------------------------------------------------------ #
+    # 액션 (실물 문 명령 DoorCommand — 문마다 서버가 따로다)
+    # ------------------------------------------------------------------ #
+    def send_door_goal(self, idx: int, command: str) -> dict:
+        """실물 문 하나에 DoorCommand goal 을 보낸다. 완료·실패는 결과 콜백이 화면에 남긴다."""
+        client = self._door_client(idx)
+        if command not in DOOR_COMMANDS:
+            raise BridgeError(
+                f"계약에 없는 문 명령: {command!r} (open / close / unlock / calibration)"
+            )
+        name = self._web_side_door_names[idx]
+        if not client.wait_for_server(timeout_sec=1.0):
+            raise BridgeError(f"액션 서버 미연결: /{name}/command")
+
+        goal = DoorCommand.Goal()
+        goal.command = command
+        send_future = client.send_goal_async(
+            goal, feedback_callback=functools.partial(self._on_door_feedback, idx)
+        )
+        goal_handle = self._wait(send_future, f"{name} goal 전송")
+        if not goal_handle.accepted:
+            self.state.add_log("warn", f"{name}: '{command}' goal 이 거부되었습니다.")
+            raise BridgeError(f"{name}: goal 이 거부되었습니다.")
+
+        with self._web_goal_lock:
+            preempting = self._web_door_handles[idx] is not None
+            self._web_door_handles[idx] = goal_handle
+        self.state.update_door_job(
+            idx, active=True, command=command, state=None, elapsed=0.0, retries=0,
+            last_result=None,
+        )
+        goal_handle.get_result_async().add_done_callback(
+            functools.partial(self._on_door_result, idx, goal_handle)
+        )
+        self.state.add_log(
+            "info", f"{name}: '{command}' 개시" + (" (진행 중 goal 선점)" if preempting else "")
+        )
+        return {"accepted": True, "door": idx, "command": command}
+
+    def cancel_door_goal(self, idx: int) -> dict:
+        self._door_client(idx)
+        with self._web_goal_lock:
+            handle = self._web_door_handles[idx]
+        if handle is None:
+            raise BridgeError("진행 중인 goal 이 없습니다.")
+        name = self._web_side_door_names[idx]
+        self._wait(handle.cancel_goal_async(), f"{name} goal 취소")
+        self.state.add_log("info", f"{name}: 취소 요청을 보냈습니다.")
+        return {"canceled": True, "door": idx}
+
+    def _door_client(self, idx):
+        if isinstance(idx, bool) or not isinstance(idx, int) or not (
+            0 <= idx < len(self._web_door_clients)
+        ):
+            raise BridgeError(f"없는 문 인덱스: {idx!r} (0..{len(self._web_door_clients) - 1})")
+        return self._web_door_clients[idx]
+
+    def _on_door_feedback(self, idx: int, feedback_msg) -> None:
+        fb = feedback_msg.feedback
+        self.state.update_door_job(
+            idx, state=fb.state, elapsed=round(float(fb.elapsed), 1),
+            retries=int(fb.obstruction_retries),
+        )
+
+    def _on_door_result(self, idx: int, goal_handle, future) -> None:
+        with self._web_goal_lock:
+            is_current = self._web_door_handles[idx] is goal_handle
+            if is_current:
+                self._web_door_handles[idx] = None
+        name = self._web_side_door_names[idx]
+
+        try:
+            wrapped = future.result()
+            result = wrapped.result
+        except Exception as exc:  # noqa: BLE001 - 결과 수신 실패도 화면에 남긴다
+            if is_current:
+                self.state.update_door_job(idx, active=False)
+            self.state.add_log("error", f"{name}: 결과 수신 실패: {exc}")
+            return
+
+        last = {
+            "status": GOAL_STATUS_NAMES.get(wrapped.status, str(wrapped.status)),
+            "success": bool(result.success),
+            "error_code": int(result.error_code),
+            "error_name": DOOR_ERROR_NAMES.get(result.error_code, str(result.error_code)),
+            "message": result.message,
+        }
+        # 선점된 옛 goal 의 결과는 이력으로만 남긴다 — 진행 표시는 새 goal 의 것이다.
+        fields = {"last_result": last}
+        if is_current:
+            fields["active"] = False
+        self.state.update_door_job(idx, **fields)
+        level = "info" if result.success else "warn"
+        self.state.add_log(
+            level, f"{name}: {last['status']} · {last['error_name']} — {result.message}"
+        )
+
+    # ------------------------------------------------------------------ #
     # 파라미터 초기값 조회
     # ------------------------------------------------------------------ #
     # 파라미터 서비스는 dummy_node 가 늦게 뜨면 한동안 준비되지 않는다. 준비될
@@ -418,7 +638,9 @@ class DummyWebNode(Node):
 
         self._web_param_timer.cancel()
         request = GetParameters.Request()
-        request.names = ["notify_fail"]
+        # tracking_on_startup 도 함께 읽는다 — 실물 로드셀 모사의 tracking 은 토픽에 없어
+        # 초기 표시를 파라미터로만 맞출 수 있다(notify_fail 과 같은 사정).
+        request.names = ["notify_fail", "tracking_on_startup"]
         self._web_param_client.call_async(request).add_done_callback(
             self._on_notify_fail_param
         )
@@ -433,6 +655,9 @@ class DummyWebNode(Node):
 
         if values and values[0].type == ParameterType.PARAMETER_BOOL:
             self.state.set_notify_fail(values[0].bool_value)
+        if len(values) > 1 and values[1].type == ParameterType.PARAMETER_BOOL:
+            count = self.state.snapshot()["tray_count"]
+            self.state.set_tracking({i: values[1].bool_value for i in range(count)})
 
     # ------------------------------------------------------------------ #
     # 호출 헬퍼

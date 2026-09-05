@@ -614,6 +614,8 @@ ros2 launch dummy_node dummy_node.launch.py
 | 알림 · 측면 문 | 알림 거부 모드, 측면 문 상태 | 거부 모드 토글, 문 열기/닫기 |
 | 로드셀 | tray별 `occupied` · `healthy` · `weight_g` | tray별 토글, 전체 일괄 |
 | 적재함 문 | tray별 상태(열림/닫힘/열리는 중/닫히는 중), 끼임, 닫기 goal 진행·결과 | 열기, 닫기(force), 취소, 끼임 주입 |
+| 실물 로드셀 모사 | tray별 `occupied` · `healthy` · `weight_g` · tracking(웹 기준) | 물건 놓기/빼기, 고장 전환, 측정 재개, 적재 확정, 반출 확정, tare, 전체 일괄 |
+| 실물 적재함 문 모사 | 문별 status(닫힘/열림) · goal 진행(feedback state·경과·끼임 재시도) · 마지막 result(status·error_code) | unlock/open/close, 취소, 끼임 on/off, 손으로 닫기/열기 |
 | 이벤트 | 닫기 goal 개시·결과, 거부된 요청 | — |
 
 `header.stamp` 경과를 표시하는 이유는, BT 의 staleness 판정
@@ -634,6 +636,8 @@ ros2 launch dummy_node dummy_node.launch.py
 | `POST /api/service/<key>` | 서비스 호출. `key` 는 서버가 가진 목록으로만 해석한다 |
 | `POST /api/action/close` | 닫기 goal 전송 (`{"trays": [], "force": false}`) |
 | `POST /api/action/close/cancel` | 진행 중인 닫기 goal 취소 |
+| `POST /api/action/door/<idx>` | 실물 문 goal 전송 (`{"command": "unlock"}`, idx 0=top · 1=bottom). 진행 중이면 컨트롤러가 기존 goal 을 선점한다 |
+| `POST /api/action/door/<idx>/cancel` | 그 문의 진행 중 goal 취소 |
 
 ```bash
 # tray 0 만 물건 감지
@@ -645,10 +649,26 @@ curl -X POST http://localhost:8080/api/action/close \
   -H "Content-Type: application/json" -d '{"trays":[],"force":true}'
 ```
 
-`key` 는 `person_set`, `load_cell_occupied`, `load_cell_healthy`, `tray_door_open`,
-`tray_door_obstructed`, `floor_current`, `floor_target`, `side_door`, `notify_fail`
-아홉 개다. **목록에 없는 이름은 거부한다** — 웹이 `0.0.0.0` 으로 열려 있으므로,
-브라우저가 임의의 ROS 서비스를 호출할 수 있게 두지 않기 위함이다.
+`key` 는 구계약 아홉 개(`person_set`, `load_cell_occupied`, `load_cell_healthy`,
+`tray_door_open`, `tray_door_obstructed`, `floor_current`, `floor_target`, `side_door`,
+`notify_fail`)와 실물 모사 여덟 개(`phidget_set_tracking`, `phidget_confirm_load`,
+`phidget_confirm_unload`, `phidget_tare`, `phidget_occupied`, `phidget_healthy`,
+`side_door_obstructed`, `side_door_manual`)다. **목록에 없는 이름은 거부한다** — 웹이
+`0.0.0.0` 으로 열려 있으므로, 브라우저가 임의의 ROS 서비스를 호출할 수 있게 두지 않기 위함이다.
+
+```bash
+# 실물 로드셀 모사: 측정 재개 → 물건 놓기 → 적재 확정
+curl -X POST http://localhost:8080/api/service/phidget_set_tracking \
+  -H "Content-Type: application/json" -d '{"trays":[0],"value":true}'
+curl -X POST http://localhost:8080/api/service/phidget_occupied \
+  -H "Content-Type: application/json" -d '{"trays":[0],"value":true}'
+curl -X POST http://localhost:8080/api/service/phidget_confirm_load \
+  -H "Content-Type: application/json" -d '{"trays":[0]}'
+
+# 실물 문: 상단 unlock
+curl -X POST http://localhost:8080/api/action/door/0 \
+  -H "Content-Type: application/json" -d '{"command":"unlock"}'
+```
 
 ### 알려진 제약
 
@@ -658,3 +678,10 @@ curl -X POST http://localhost:8080/api/action/close \
 - **인증·HTTPS 가 없다.** 신뢰된 개발망 전용이다.
 - 알림 거부 모드의 **초기 표시**는 기동 시 `dummy_node` 의 파라미터를 한 번 읽어
   맞춘다. 읽지 못하면 `알 수 없음` 으로 표시되며, 한 번 토글하면 정확해진다.
+- 실물 로드셀 모사의 **tracking 표시는 웹 기준 추정값**이다. 실물 `LoadCellState` 에
+  tracking 필드가 없어 토픽으로 관찰할 수 없고, 기동 시 `tracking_on_startup` 파라미터와
+  웹에서 보낸 `set_tracking`·`confirm_*` 응답으로만 갱신한다. 터미널에서 바꾼 tracking 은
+  반영되지 않는다(발행값이 동결된 채 멈춰 있으면 tracking 이 꺼진 것이다).
+- 실물 문의 **끼임 주입 상태**도 토픽에 없어 표시하지 않는다. 진행 중 goal 의 feedback
+  `state` 가 `obstructed` 로 바뀌는 것과 이벤트 로그의 결과(`ERROR_OBSTRUCTION_RETRIES_EXHAUSTED`)로
+  확인한다.

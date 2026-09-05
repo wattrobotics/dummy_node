@@ -67,13 +67,15 @@ function render(state) {
   renderFloor(state.floor);
   renderNotify(state.notify_fail);
   renderSideDoor(state.side_door);
+  renderPhidgetLoadCell(state.phidget_load_cell, state.tracking, state.tray_count);
+  renderSideDoors(state.side_doors, state.door_jobs, state.door_names);
   renderLog(state.log);
   renderConnFromTopics(state);
 }
 
 function renderConnFromTopics(state) {
   // 웹 서버는 붙어 있어도 dummy_node 가 죽으면 토픽이 끊긴다. 그 둘을 구분해 알린다.
-  const sections = [state.person, state.load_cell, state.tray_door];
+  const sections = [state.person, state.load_cell, state.tray_door, state.phidget_load_cell];
   const seen = sections.filter((s) => s.seen);
   if (seen.length === 0) {
     setConn("down", "dummy_node 로부터 아직 수신 없음");
@@ -257,6 +259,118 @@ function renderLog(entries) {
 }
 
 // ------------------------------------------------------------------ //
+// 실물 모사 인터페이스 (phidget_load_cell · side_door)
+// ------------------------------------------------------------------ //
+
+function renderPhidgetLoadCell(section, tracking, trayCount) {
+  const host = $("phidget-trays");
+  const trays = section.seen ? section.trays : placeholderTrays(trayCount);
+
+  // 물건 놓기/빼기는 토글이 아니라 명시 버튼이다. tracking 이 꺼져 있으면 발행값(동결)과
+  // 판 위의 실제 상황이 다르므로, 발행값을 뒤집는 토글은 엉뚱한 값을 보낸다.
+  syncRows(host, trays.length, (tray) => `
+    <span class="tray-name">tray ${tray}</span>
+    <span class="badge" data-role="occupied">—</span>
+    <span class="badge" data-role="healthy">—</span>
+    <span class="badge" data-role="tracking">—</span>
+    <span class="meta" data-role="weight"></span>
+    <button data-service="phidget_occupied" data-trays="[${tray}]" data-value="true">물건 놓기</button>
+    <button data-service="phidget_occupied" data-trays="[${tray}]" data-value="false">물건 빼기</button>
+    <button data-service="phidget_healthy" data-trays="[${tray}]" data-toggle="p_healthy">고장 전환</button>
+    <button data-service="phidget_set_tracking" data-trays="[${tray}]" data-value="true">측정 재개</button>
+    <button data-service="phidget_confirm_load" data-trays="[${tray}]">적재 확정</button>
+    <button data-service="phidget_confirm_unload" data-trays="[${tray}]">반출 확정</button>
+    <button data-service="phidget_tare" data-trays="[${tray}]">tare</button>
+  `);
+
+  trays.forEach((entry, i) => {
+    const row = host.children[i];
+    const occupied = row.querySelector('[data-role="occupied"]');
+    const healthy = row.querySelector('[data-role="healthy"]');
+    const track = row.querySelector('[data-role="tracking"]');
+
+    const value = tracking ? tracking[i] : null;
+    const known = value !== null && value !== undefined;
+    track.textContent = known ? (value ? "측정 중" : "동결") : "tracking ?";
+    track.className = `badge ${known ? (value ? "on" : "moving") : ""}`;
+    track.title = "tracking 은 토픽에 없어 웹에서 보낸 명령 기준으로 표시한다";
+
+    if (!section.seen) {
+      occupied.textContent = "—";
+      occupied.className = "badge";
+      healthy.textContent = "—";
+      healthy.className = "badge";
+      row.querySelector('[data-role="weight"]').textContent = "";
+      return;
+    }
+    occupied.textContent = entry.occupied ? "물건 있음" : "비어 있음";
+    occupied.className = `badge ${entry.occupied ? "on" : "off"}`;
+    healthy.textContent = entry.healthy ? "정상" : "확인 불가";
+    healthy.className = `badge ${entry.healthy ? "off" : "alert"}`;
+    row.querySelector('[data-role="weight"]').textContent = `${entry.weight_g} g`;
+  });
+}
+
+const DOOR_LABEL = ["top (tray 0)", "bottom (tray 1)"];
+
+function renderSideDoors(doors, jobs, names) {
+  const host = $("side-doors");
+
+  // 끼임·손으로 움직임은 명시 버튼이다 — 끼임 주입 상태는 토픽에 없어 토글할 기준이 없다.
+  syncRows(host, names.length, (idx) => `
+    <span class="tray-name" data-role="name">문 ${idx}</span>
+    <span class="badge" data-role="status">—</span>
+    <span class="meta" data-role="age"></span>
+    <button data-door="${idx}" data-command="unlock">unlock (열기)</button>
+    <button data-door="${idx}" data-command="open">open (활짝)</button>
+    <button data-door="${idx}" data-command="close">close</button>
+    <button data-door-cancel="${idx}" class="danger" disabled>취소</button>
+    <button data-service="side_door_obstructed" data-trays="[${idx}]" data-value="true">끼임 on</button>
+    <button data-service="side_door_obstructed" data-trays="[${idx}]" data-value="false">끼임 off</button>
+    <button data-service="side_door_manual" data-trays="[${idx}]" data-value="true">손으로 닫기</button>
+    <button data-service="side_door_manual" data-trays="[${idx}]" data-value="false">손으로 열기</button>
+    <div class="job" data-role="job"></div>
+  `);
+
+  names.forEach((name, i) => {
+    const row = host.children[i];
+    const section = doors[i] || { seen: false };
+    const job = jobs[i] || { active: false, last_result: null };
+
+    row.querySelector('[data-role="name"]').textContent =
+      `${DOOR_LABEL[i] || `문 ${i}`} · ${name}`;
+
+    const status = row.querySelector('[data-role="status"]');
+    if (!section.seen) {
+      status.textContent = "—";
+      status.className = "badge";
+    } else {
+      const closed = section.status === "closed";
+      status.textContent = closed ? "닫힘" : "열림";
+      status.className = `badge ${closed ? "off" : "on"}`;
+    }
+    applyAge(row.querySelector('[data-role="age"]'), section);
+
+    row.querySelector("[data-door-cancel]").disabled = !job.active;
+    row.querySelector('[data-role="job"]').innerHTML = doorJobText(job);
+  });
+}
+
+function doorJobText(job) {
+  if (job.active) {
+    const retries = job.retries ? `, 끼임 재시도 ${job.retries}` : "";
+    return `<b>${job.command}</b> 진행 중 — 상태 ${escapeHtml(job.state ?? "…")}, ` +
+      `${Number(job.elapsed || 0).toFixed(1)}s${retries}`;
+  }
+  if (job.last_result) {
+    const r = job.last_result;
+    return `마지막 결과 — <b>${r.status}</b> · ${r.error_name} (${r.error_code}) · ` +
+      escapeHtml(r.message);
+  }
+  return "진행 중인 goal 이 없다.";
+}
+
+// ------------------------------------------------------------------ //
 // DOM 헬퍼
 // ------------------------------------------------------------------ //
 function placeholderTrays(count) {
@@ -304,6 +418,12 @@ function currentValue(toggle, tray) {
     const entry = section.trays.find((t) => t.tray === tray);
     return entry ? entry[toggle] : false;
   }
+  if (toggle === "p_healthy") {
+    const section = lastState.phidget_load_cell;
+    if (!section.seen) return false;
+    const entry = section.trays.find((t) => t.tray === tray);
+    return entry ? entry.healthy : false;
+  }
   if (toggle === "obstructed") {
     const section = lastState.tray_door;
     if (!section.seen) return false;
@@ -316,6 +436,16 @@ function currentValue(toggle, tray) {
 document.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button) return;
+
+  // 실물 문 명령(액션). 문마다 서버가 따로라 인덱스로 고른다.
+  if (button.dataset.door !== undefined) {
+    post(`/api/action/door/${button.dataset.door}`, { command: button.dataset.command });
+    return;
+  }
+  if (button.dataset.doorCancel !== undefined) {
+    post(`/api/action/door/${button.dataset.doorCancel}/cancel`, {});
+    return;
+  }
 
   // 문 닫기(액션)
   if (button.dataset.close !== undefined) {

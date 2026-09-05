@@ -10,6 +10,8 @@
   <depend>rclpy</depend>
   <!-- dummy_web 이 dummy_node 의 파라미터 초기값을 읽는 데 쓴다 -->
   <depend>rcl_interfaces</depend>
+  <!-- dummy_web 이 실물 문 goal 결과의 상태 코드 이름(GoalStatus)을 붙이는 데 쓴다 -->
+  <depend>action_msgs</depend>
   <depend>example_interfaces</depend>
   <depend>std_msgs</depend>
   <depend>dummy_node_interfaces</depend>

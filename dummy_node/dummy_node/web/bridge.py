@@ -29,8 +29,12 @@ LOG_LIMIT = 30
 class StateStore:
     """스레드 안전한 상태 스냅샷 보관소."""
 
-    def __init__(self, tray_count: int):
-        """`tray_count` 는 토픽 수신 전에 화면에 그릴 칸 수의 초기값이다."""
+    def __init__(self, tray_count: int, door_names: list[str] | None = None):
+        """`tray_count` 는 토픽 수신 전에 화면에 그릴 칸 수의 초기값이다.
+
+        `door_names` 는 실물 문 컨트롤러 이름 목록(인덱스 = tray)이다. 문마다 status 토픽과
+        command 액션이 따로 있으므로 문 수만큼 칸을 만든다.
+        """
         self._cv = threading.Condition()
         self._rev = 0
         self._tray_count = int(tray_count)
@@ -41,6 +45,11 @@ class StateStore:
         self._tray_door: dict | None = None
         self._floor: dict | None = None
         self._side_door: dict | None = None
+
+        # 실물 모사 인터페이스(phidget_load_cell · side_door)의 수신값.
+        self._phidget_load_cell: dict | None = None
+        self._door_names = [str(n) for n in (door_names or [])]
+        self._side_doors: list[dict | None] = [None] * len(self._door_names)
 
         # 토픽만으로 알 수 없는 값들.
         self._door_intent: dict[int, str] = {}
@@ -53,6 +62,21 @@ class StateStore:
             "obstructed": False,
             "last_result": None,
         }
+        # 실물 로드셀의 tracking 은 토픽에 없다. 기동 시 파라미터와 웹에서 보낸 서비스
+        # 응답으로만 알 수 있으므로 "웹 기준 추정값" 이다(터미널 조작은 반영되지 않는다).
+        self._tracking: dict[int, bool] = {}
+        # 실물 문 goal 진행 상황. 문마다 하나씩.
+        self._door_jobs: list[dict] = [
+            {
+                "active": False,
+                "command": None,
+                "state": None,
+                "elapsed": 0.0,
+                "retries": 0,
+                "last_result": None,
+            }
+            for _ in self._door_names
+        ]
         self._log: list[dict] = []
 
     # ------------------------------------------------------------------ #
@@ -132,6 +156,39 @@ class StateStore:
             self._close_job.update(fields)
             self._bump()
 
+    def set_phidget_load_cell(self, trays: list[dict], stamp_age_ms: float) -> None:
+        """실물 로드셀 모사(/load_cell_state) 수신값을 갱신한다."""
+        with self._cv:
+            self._phidget_load_cell = {
+                "trays": trays,
+                "stamp_age_ms": round(stamp_age_ms, 1),
+                "at": time.monotonic(),
+            }
+            self._sync_tray_count(len(trays))
+            self._bump()
+
+    def set_side_door_status(self, idx: int, status: str) -> None:
+        """실물 문 status(closed|open) 수신값을 갱신한다."""
+        with self._cv:
+            if 0 <= idx < len(self._side_doors):
+                self._side_doors[idx] = {"status": str(status), "at": time.monotonic()}
+                self._bump()
+
+    def set_tracking(self, values: dict[int, bool]) -> None:
+        """각 tray 의 tracking 표시값을 갱신한다(웹 기준 추정값)."""
+        if not values:
+            return
+        with self._cv:
+            self._tracking.update({int(k): bool(v) for k, v in values.items()})
+            self._bump()
+
+    def update_door_job(self, idx: int, **fields) -> None:
+        """실물 문 goal 의 진행 상황·결과를 갱신한다."""
+        with self._cv:
+            if 0 <= idx < len(self._door_jobs):
+                self._door_jobs[idx].update(fields)
+                self._bump()
+
     def add_log(self, level: str, message: str) -> None:
         """화면 하단에 보일 이벤트를 한 줄 남긴다."""
         with self._cv:
@@ -164,6 +221,14 @@ class StateStore:
                 "side_door": self._aged(self._side_door, now, ("open",)),
                 "close_job": dict(self._close_job),
                 "notify_fail": self._notify_fail,
+                # 실물 모사 인터페이스
+                "phidget_load_cell": self._aged(
+                    self._phidget_load_cell, now, ("trays", "stamp_age_ms")
+                ),
+                "tracking": [self._tracking.get(i) for i in range(self._tray_count)],
+                "door_names": list(self._door_names),
+                "side_doors": [self._aged(d, now, ("status",)) for d in self._side_doors],
+                "door_jobs": [dict(j) for j in self._door_jobs],
                 "log": list(self._log),
             }
 
