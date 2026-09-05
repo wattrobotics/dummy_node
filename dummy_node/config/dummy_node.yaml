@@ -40,6 +40,27 @@
     # ERROR_TIMEOUT 이 된다(force=true 로 계속 시도하는 경우).
     door_close_timeout_sec: 10.0
 
+    # --- phidget_load_cell (실물 phidgets_hw 로드셀 모사, 절대 이름 /load_cell_state 등) ---
+    # tray_count · load_cell_period_sec · initial_load_cell_* · occupied_weight_g 는 위의
+    # load_cell 과 공유한다. 기동 직후의 변화 인지 상태 — 실물 기본값처럼 꺼짐(동결)으로
+    # 시작한다. 켜기 전엔 물건을 놓아도 발행값이 바뀌지 않는다(BT 가 문을 열 때 켠다).
+    tracking_on_startup: false
+
+    # --- side_door (실물 w_swing_door_controller top/bottom 모사, 절대 이름) ---
+    # 컨트롤러 이름. 인덱스 = tray (0=상단=top, 1=하단=bottom). /<이름>/command 액션과
+    # /<이름>/status 토픽이 된다. 실기 기준(ScreenDoorDefaults.xml)이며 검증 리그에서는
+    # top_door_controller 등으로 바꾼다.
+    side_door_controllers: [side_door_top_controller, side_door_bottom_controller]
+    side_door_status_period_sec: 0.1     # status 발행 주기(초). 실물은 50Hz, BT stale 판정은 3000ms
+    # initial_doors_open · door_open_duration_sec(unlock·open) · door_close_duration_sec 는
+    # 위의 tray_door 와 공유한다.
+    side_door_goal_timeout_sec: 30.0     # goal 1회 상한(실물 기본값). 초과 시 ERROR_GOAL_TIMEOUT(21)
+    # 끼임 후 재시도까지의 시간. 0 이면 재시도 없이 obstructed 에 머문다(goal_timeout 이 끊는다).
+    side_door_obstruction_timeout_sec: 1.0
+    # 끼임 재시도 상한. 소진하면 ERROR_OBSTRUCTION_RETRIES_EXHAUSTED(2).
+    # 0 이면 첫 타임아웃에서 바로 error 다 — 끼임 시험이 1초 안에 끝난다.
+    side_door_obstruction_max_retries: 0
+
     # --- notify (TakeParcelScreen.md §4.5) ---
     # true 면 기동 시부터 모든 알림 요청을 거부한다. 보고 실패 누적 경로를 시험할 때
     # 쓰며, 런타임에는 /dummy/notify/set_fail 서비스로 켜고 끈다.

@@ -11,7 +11,11 @@
   <!-- dummy_web 이 dummy_node 의 파라미터 초기값을 읽는 데 쓴다 -->
   <depend>rcl_interfaces</depend>
   <depend>example_interfaces</depend>
+  <depend>std_msgs</depend>
   <depend>dummy_node_interfaces</depend>
+  <!-- 실물 계약 모사용. phidget_load_cell(로드셀 msg/srv) · side_door(DoorCommand 액션) -->
+  <depend>phidgets_hw</depend>
+  <depend>w_ros2_controller_interfaces</depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>

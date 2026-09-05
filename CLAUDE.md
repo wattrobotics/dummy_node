@@ -49,6 +49,9 @@ gh pr create --fill
 1. **네임스페이스**: 인터페이스는 항상 상대 이름만 쓴다(`"my_topic"`).
    코어 노드가 `namespace="dummy"` 로 생성되므로 자동으로 `/dummy/...` 가 된다.
    `~/` 나 절대경로는 규칙을 깬다.
+   **예외**: 실물 모사 인터페이스(`phidget_load_cell.py` · `side_door.py`)는 BT 를 고치지
+   않고 실물을 대체하는 것이 목적이라 실물 계약의 이름만 절대 이름으로 낸다. 더미 조작용
+   서비스는 규칙대로 `/dummy/` 아래다(README "네임스페이스 규칙" 참고).
 
 2. **공유 파라미터**: 둘 이상의 인터페이스가 쓰는 파라미터는 반드시
    `InterfaceBase.param()` 을 쓴다. `declare_parameter` 를 두 번 호출하면

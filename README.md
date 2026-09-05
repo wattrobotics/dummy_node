@@ -173,9 +173,11 @@ dummy_node/                        # git repo 루트 (멀티패키지)
 │   │       ├── robot_side_door.py           # SetBool 서비스 + Bool status 퍼블리셔
 │   │       ├── robot_floor.py               # 층 이동 (SetInt 서비스 2종 + Int32 퍼블리셔)
 │   │       ├── person_presence.py           # 사람 인식 (PersonPresence 퍼블 + SetBool 토글)
-│   │       ├── load_cell.py                 # 로드셀 (LoadCellState 퍼블 + occupied/healthy 토글)
-│   │       ├── tray_door.py                 # 적재함 문 (열기 srv + 닫기 action + 상태 토픽)
-│   │       └── notify.py                    # 알림 서버 (수신 내용을 터미널에 출력)
+│   │       ├── load_cell.py                 # 로드셀 (LoadCellState 퍼블 + occupied/healthy 토글) — 구계약
+│   │       ├── tray_door.py                 # 적재함 문 (열기 srv + 닫기 action + 상태 토픽) — 구계약
+│   │       ├── notify.py                    # 알림 서버 (수신 내용을 터미널에 출력)
+│   │       ├── phidget_load_cell.py         # 실물 로드셀(phidgets_hw) 모사 — 실물 이름 그대로
+│   │       └── side_door.py                 # 실물 적재함 문(w_swing_door_controller top/bottom) 모사
 │   │   └── web/                   # 웹 제어 콘솔 (별도 노드 `dummy_web`)
 │   │       ├── console_node.py    # ROS 노드. 상태 구독 + 서비스/액션 클라이언트
 │   │       ├── bridge.py          # 스레드 안전한 상태 스냅샷 보관소
@@ -213,6 +215,11 @@ dummy_node/                        # git repo 루트 (멀티패키지)
 > 코어 노드가 `namespace="dummy"`로 생성되므로, 인터페이스는 **상대 이름**(예: `"my_topic"`)만
 > 쓰면 자동으로 `/dummy/my_topic`이 된다. `~/`나 절대경로(`/...`)는 규칙을 깨므로 쓰지 않는다.
 
+> **예외 — 실물 모사 인터페이스.** `phidget_load_cell`·`side_door` 는 BT 를 고치지 않고 실물을
+> 대체하는 것이 목적이라 실물 이름(`/load_cell_state`, `/side_door_top_controller/command` 등)을
+> **절대 이름으로** 낸다. 예외는 실물 계약에 있는 이름에만 적용하고, 더미 조작용 서비스는
+> 규칙대로 `/dummy/` 아래에 둔다. 실물 노드와 이름이 겹치므로 실물과 동시에 띄우지 않는다.
+
 ```python
 from example_interfaces.msg import String
 from dummy_node.registry import InterfaceBase, register
@@ -240,16 +247,22 @@ class MyPublisher(InterfaceBase):
 | `initial_floor` | int | `1` | `robot_floor` | 시작 층 (0층 부재, 지하 1층=-1) |
 | `initial_is_person` | bool | `false` | `person_presence` | 시작 시 사람 인식 값 |
 | `person_presence_period_sec` | double | `0.1` | `person_presence` | 사람 인식 발행 주기(초) |
-| `tray_count` | int | `2` | **공유** (`load_cell` · `tray_door`) | 적재함 단 개수 (0=상단) |
-| `load_cell_period_sec` | double | `0.1` | `load_cell` | 로드셀 상태 발행 주기(초) |
-| `initial_load_cell_occupied` | bool | `false` | `load_cell` | 시작 시 물건 감지 여부 |
-| `initial_load_cell_healthy` | bool | `true` | `load_cell` | 시작 시 로드셀 정상 여부 |
-| `occupied_weight_g` | double | `1000.0` | `load_cell` | `occupied` 일 때 보고할 무게(g). 진단용 |
-| `initial_doors_open` | bool | `false` | `tray_door` | 시작 시 문 열림 여부 |
+| `tray_count` | int | `2` | **공유** (`load_cell` · `tray_door` · `phidget_load_cell`) | 적재함 단 개수 (0=상단) |
+| `load_cell_period_sec` | double | `0.1` | **공유** (`load_cell` · `phidget_load_cell`) | 로드셀 상태 발행 주기(초) |
+| `initial_load_cell_occupied` | bool | `false` | **공유** (`load_cell` · `phidget_load_cell`) | 시작 시 물건 감지 여부 |
+| `initial_load_cell_healthy` | bool | `true` | **공유** (`load_cell` · `phidget_load_cell`) | 시작 시 로드셀 정상 여부 |
+| `occupied_weight_g` | double | `1000.0` | **공유** (`load_cell` · `phidget_load_cell`) | `occupied` 일 때 보고할 무게(g). 진단용 |
+| `initial_doors_open` | bool | `false` | **공유** (`tray_door` · `side_door`) | 시작 시 문 열림 여부 |
 | `tray_door_state_period_sec` | double | `0.2` | `tray_door` | 문 상태 발행 주기(초) |
-| `door_open_duration_sec` | double | `2.0` | `tray_door` | 열기 개시 → 완전 열림 소요 시간 |
-| `door_close_duration_sec` | double | `2.0` | `tray_door` | 닫기 개시 → 완전 닫힘 소요 시간 |
+| `door_open_duration_sec` | double | `2.0` | **공유** (`tray_door` · `side_door`) | 열기(side_door 는 unlock·open) 개시 → 완료 소요 시간 |
+| `door_close_duration_sec` | double | `2.0` | **공유** (`tray_door` · `side_door`) | 닫기 개시 → 완전 닫힘 소요 시간 |
 | `door_close_timeout_sec` | double | `10.0` | `tray_door` | `CloseTrayDoor` 1회 goal 제한 시간 |
+| `tracking_on_startup` | bool | `false` | `phidget_load_cell` | 기동 직후 변화 인지 상태. 실물 기본값처럼 꺼짐(동결) |
+| `side_door_controllers` | string[] | `[side_door_top_controller, side_door_bottom_controller]` | `side_door` | 컨트롤러 이름. 인덱스 = tray(0=top, 1=bottom). `/<이름>/command`·`/<이름>/status` 가 된다 |
+| `side_door_status_period_sec` | double | `0.1` | `side_door` | status 발행 주기(초) |
+| `side_door_goal_timeout_sec` | double | `30.0` | `side_door` | goal 1회 상한. 초과 시 `ERROR_GOAL_TIMEOUT(21)` |
+| `side_door_obstruction_timeout_sec` | double | `1.0` | `side_door` | 끼임 후 재시도까지의 시간. 0 = 재시도 없이 obstructed 유지 |
+| `side_door_obstruction_max_retries` | int | `0` | `side_door` | 끼임 재시도 상한. 소진 시 `ERROR_OBSTRUCTION_RETRIES_EXHAUSTED(2)` |
 | `notify_fail` | bool | `false` | `notify` | 기동 시부터 알림 요청을 거부할지 |
 
 웹 제어 콘솔은 **별도 노드**이므로 YAML 키가 다르다(`/dummy/dummy_web`).
@@ -282,6 +295,8 @@ class MyPublisher(InterfaceBase):
 
 ```bash
 cd ~/ros2_ws
+# 실물 모사 인터페이스가 phidgets_hw(msg/srv) · w_ros2_controller_interfaces(action) 에 의존한다.
+# 두 패키지가 아직 빌드되지 않았다면 --packages-up-to dummy_node 로 함께 빌드한다.
 colcon build --packages-select dummy_node_interfaces dummy_node
 source install/setup.bash
 
@@ -322,6 +337,17 @@ ros2 launch dummy_node dummy_node.launch.py enable_web:=false
 | Service | `/dummy/robot/tray_door/set_obstructed` | `dummy_node_interfaces/srv/SetTrayBool` (끼임 감지 주입) |
 | Service | `/dummy/notify` | `dummy_node_interfaces/srv/Notify` (알림 수신 → 터미널 출력) |
 | Service | `/dummy/notify/set_fail` | `example_interfaces/srv/SetBool` (알림 거부 모드 토글) |
+| Publisher | `/load_cell_state` | `phidgets_hw/msg/LoadCellState` (**실물 이름**, 기본 10Hz, volatile) |
+| Service | `/phidget_load_cell/set_tracking` | `phidgets_hw/srv/SetTracking` (변화 인지 켜기 / 동결) |
+| Service | `/phidget_load_cell/confirm_load` | `phidgets_hw/srv/ConfirmLoad` (적재 확정 + 동결) |
+| Service | `/phidget_load_cell/confirm_unload` | `phidgets_hw/srv/ConfirmUnload` (반출 확인 + 동결) |
+| Service | `/phidget_load_cell/tare` | `phidgets_hw/srv/Tare` (영점 재설정) |
+| Service | `/dummy/phidget_load_cell/set_occupied` | `dummy_node_interfaces/srv/SetTrayBool` (판 위에 물건 놓기/빼기) |
+| Service | `/dummy/phidget_load_cell/set_healthy` | `dummy_node_interfaces/srv/SetTrayBool` (로드셀 고장 주입) |
+| **Action** ×2 | `/side_door_{top,bottom}_controller/command` | `w_ros2_controller_interfaces/action/DoorCommand` (**실물 이름**) |
+| Publisher ×2 | `/side_door_{top,bottom}_controller/status` | `std_msgs/msg/String` — `closed` \| `open` (기본 10Hz) |
+| Service | `/dummy/side_door/set_obstructed` | `dummy_node_interfaces/srv/SetTrayBool` (끼임 주입. trays 0=top, 1=bottom) |
+| Service | `/dummy/side_door/manual_move` | `dummy_node_interfaces/srv/SetTrayBool` (손으로 움직임. true=닫기, false=열기) |
 
 ### 층(floor) 규칙
 
@@ -362,6 +388,10 @@ ros2 topic echo /dummy/person_presence
 
 `docs/spec/tasks/TakeParcelScreen.md` §3.2 규격의 스텁이다.
 
+> **구계약.** 스크린 BT 는 실물 로드셀 계약(`phidgets_hw`)으로 옮겨 갔고, 그 더미는 아래
+> [실물 로드셀 모사](#실물-로드셀-모사phidget_load_cell)다. 이 인터페이스는 BT 의
+> `DummyCheckLoadCell` 플러그인 호환을 위해 그대로 남겨 두며 계속 동작한다.
+
 - 토픽 `/dummy/load_cell_state` — `Header` + `LoadCellTray[]`(`tray`/`weight_g`/`occupied`/`healthy`).
   QoS 는 **reliable · depth 1 · volatile**(스펙 지정).
 - `weight_g` 는 **진단용**이며 BT 판정에는 쓰이지 않는다(스펙). 따라서 별도 설정 수단 없이
@@ -380,7 +410,11 @@ ros2 service call /dummy/load_cell/set_healthy dummy_node_interfaces/srv/SetTray
 
 `docs/spec/tasks/TakeParcelScreen.md` §3.3 규격의 스텁이다. **열기 = Service, 닫기 = Action,
 상태 = Topic** 이라는 형태 배분이 스펙에서 확정된 것이며, 기존 `robot_side_door`(단일 문)는
-tray 개념이 없어 이 스펙을 만족하지 못한다. BT는 이 인터페이스만 쓴다.
+tray 개념이 없어 이 스펙을 만족하지 못한다.
+
+> **구계약.** 스크린 BT 는 실물 문 계약(`w_swing_door_controller`, 문마다 액션 + status)으로
+> 옮겨 갔고, 그 더미는 아래 [실물 적재함 문 모사](#실물-적재함-문-모사side_door)다. 이 인터페이스는
+> BT 의 `Dummy*TrayDoor*` 플러그인 호환을 위해 그대로 남겨 두며 계속 동작한다.
 
 문 동작 모형: `closed → opening → open → closing → closed`.
 `opening`/`closing` 중에는 `open` 과 `closed` 가 **둘 다 false**(= 이동 중)다.
@@ -456,6 +490,80 @@ ros2 service call /dummy/notify dummy_node_interfaces/srv/Notify \
 ```bash
 ros2 service call /dummy/notify/set_fail example_interfaces/srv/SetBool "{data: true}"
 ```
+
+### 실물 로드셀 모사(phidget_load_cell)
+
+`phidgets_hw` 의 `phidget_load_cell` 노드를 **이름·타입 그대로** 모사한다. 스크린 BT 의
+`CheckLoadCell`·`SetLoadCellTracking`·`ConfirmLoadCellLoad/Unload` 가 실물 대신 이것을 보게
+하는 용도이며 BT 는 수정하지 않는다(이름 정본: `w_behavior_tree` 의 `ScreenDoorDefaults.xml`).
+구계약 `load_cell` 과 파라미터 5개(`tray_count` 등)를 공유하고 서로 간섭하지 않는다.
+
+모사하는 동작 — BT 판정에 영향을 주는 것만:
+
+| 동작 | 모사 |
+|---|---|
+| **tracking 게이트** | 기동 시 꺼짐(`tracking_on_startup: false`, 실물 기본값). 꺼진 동안 `weight_g`·`occupied` 는 마지막 인지 값으로 **동결**되고 `healthy` 만 실시간이다. 켜기 전엔 물건을 놓아도 발행값이 바뀌지 않는다 — BT 가 문을 열 때 `set_tracking` 을 부르는 이유다 |
+| `confirm_load` | 비점유 tray 는 실패(`not occupied — skipped`), 점유면 W_in 확정 + 동결 |
+| `confirm_unload` | 아직 점유면 실패(`still occupied`), 비점유면 동결 |
+| `tare` | 지금 하중을 영점으로 잡는다. 물건이 올라간 채 부르면 **비점유가 된다**(실물의 "숨은 tare 는 물건을 지운다" 함정 그대로) |
+| trays 규약 | 빈 배열 = 전체. 실물 서비스는 범위 밖 인덱스를 무시하고 매칭이 하나도 없을 때만 실패한다. 더미 조작 `SetTrayBool` 은 구계약처럼 범위 밖을 거부한다 |
+
+```bash
+# 적재 사이클: 문 열림 → 측정 재개 → 물건 놓기 → 문 닫힘 → 적재 확정(동결)
+ros2 service call /phidget_load_cell/set_tracking phidgets_hw/srv/SetTracking "{trays: [0], enable: true}"
+ros2 service call /dummy/phidget_load_cell/set_occupied dummy_node_interfaces/srv/SetTrayBool "{trays: [0], value: true}"
+ros2 service call /phidget_load_cell/confirm_load phidgets_hw/srv/ConfirmLoad "{trays: [0]}"
+
+# 반출 사이클: 측정 재개 → 물건 빼기 → 반출 확인(동결)
+ros2 service call /phidget_load_cell/set_tracking phidgets_hw/srv/SetTracking "{trays: [0], enable: true}"
+ros2 service call /dummy/phidget_load_cell/set_occupied dummy_node_interfaces/srv/SetTrayBool "{trays: [0], value: false}"
+ros2 service call /phidget_load_cell/confirm_unload phidgets_hw/srv/ConfirmUnload "{trays: [0]}"
+
+# 로드셀 고장("판정 불가" 경로) / 발행 확인
+ros2 service call /dummy/phidget_load_cell/set_healthy dummy_node_interfaces/srv/SetTrayBool "{trays: [1], value: false}"
+ros2 topic echo /load_cell_state
+```
+
+모사하지 않는 것: 셀 단위 원시 토픽(`~/<tray>/load_cells`), 임계·debounce·plateau 등 무게 기반
+자율 판정(점유는 `set_occupied` 로 직접 준다), `ros2 param set` 동적 파라미터.
+
+### 실물 적재함 문 모사(side_door)
+
+`w_swing_door_controller` 상·하단 컨트롤러 2대를 **문마다 액션 서버 + status 퍼블리셔**로
+모사한다. 이름은 `side_door_controllers`(인덱스 = tray, 0=상단=top, 1=하단=bottom)로 맞추며
+기본값이 실기 이름이다. BT 는 `TrayDoorCommand`(unlock·close)와
+`TrayDoorStateIs`·`TrayDoorAwaitClosed`(status)로 쓴다. 구계약 `tray_door` 와 파라미터 3개
+(`initial_doors_open`, `door_open_duration_sec`, `door_close_duration_sec`)를 공유한다.
+
+상태 모형: `closed → unlocking → unlocked`(unlock) · `→ opening → open`(open) · `→ closing → closed`.
+**status 토픽은 `closed` 일 때만 `"closed"`, 그 외 전부 `"open"`** 이다 — 실물이 위치가 닫힘 구간
+밖이면 이동 중·끼임·에러를 가리지 않고 `open` 을 내는 것과 같다.
+
+| 상황 | 액션 result |
+|---|---|
+| 정상 완료 | SUCCEEDED, `success=true`, `error_code=0`, `완료 — 상태 closed` |
+| 이미 목표 상태 | 이동하지 않고 즉시 SUCCEEDED (멱등). unlock 은 `unlocked`·`open` 둘 다 만족 |
+| 이동 중 새 goal | 기존 goal ABORTED, `success=false`, `error_code=0`, `새 명령으로 선점됨` (실패가 아니다) |
+| 취소 | CANCELED, `success=false`, `error_code=0`. 래치 통과 전(unlocking)이면 `closed`, 통과 뒤(closing·opening)면 `unlocked` 로 멈춘다 |
+| 끼임(`set_obstructed`) 중 이동 | `obstructed` 로 정지 → `side_door_obstruction_timeout_sec` 뒤 재시도 → `side_door_obstruction_max_retries` 초과 시 ABORTED, `error_code=2`. 진행 중엔 feedback `obstruction_retries` 로만 알린다 |
+| goal 상한 초과 | ABORTED, `error_code=21`. 문은 그 자리에 머문다 |
+| 계약에 없는 명령 | goal 거부 |
+
+```bash
+# 열기(=unlock) → 상태 확인 → 닫기. 기본 2초씩 걸린다
+ros2 action send_goal /side_door_top_controller/command w_ros2_controller_interfaces/action/DoorCommand "{command: unlock}" -f
+ros2 topic echo /side_door_top_controller/status
+ros2 action send_goal /side_door_top_controller/command w_ros2_controller_interfaces/action/DoorCommand "{command: close}"
+
+# 끼임 주입 → close 가 error_code=2 로 실패 (기본값: 1초 뒤, 재시도 0회)
+ros2 service call /dummy/side_door/set_obstructed dummy_node_interfaces/srv/SetTrayBool "{trays: [0], value: true}"
+
+# 사용자가 손으로 닫음 (TrayDoorAwaitClosed 경로). false 면 손으로 열음. 물리 제약은 검사하지 않는다
+ros2 service call /dummy/side_door/manual_move dummy_node_interfaces/srv/SetTrayBool "{trays: [0], value: true}"
+```
+
+모사하지 않는 것: 위치(feedback `position`·`target` 은 0 고정), `calibration`(즉시 성공),
+잠금 장치·엔드 스위치·전류 관련 에러 코드(1·3·4·5·20).
 
 ## 웹 제어 콘솔
 
